@@ -1,0 +1,347 @@
+// Whether a dependency's range admits a version (first-party registry R6.1,
+// bynk-lang/bynk#2413, decision D): the publication rule asks it of every
+// registry dependency. The dialect is the manifest's, Cargo's `VersionReq` as
+// the `semver` crate reads it (`bynk-project/src/manifest.rs`), and so are the
+// semantics: a bare version is a caret, partial versions and wildcards are
+// allowed, and comparators are separated by commas.
+commons registry.ranges
+
+---
+A version: `MAJOR.MINOR.PATCH` with an optional pre-release tag. Build
+metadata is dropped: it never affects precedence.
+---
+type Version = {
+	major: Int,
+	minor: Int,
+	patch: Int,
+	pre: String,
+}
+
+---
+One comparator of a range: its operator (`=`, `>`, `>=`, `<`, `<=`, `~`, `^`),
+and the version it names, whose minor and patch may be left out (`^1`,
+`~1.2`, `1.*`).
+---
+type Comparator = {
+	op: String,
+	major: Int,
+	minor: Option[Int],
+	patch: Option[Int],
+	pre: String,
+}
+
+fn isDigits(s: String) -> Bool {
+	s != "" && s.chars().all((c) => "0123456789".contains(c))
+}
+
+fn isWildcard(s: String) -> Bool {
+	s == "*" || s == "x" || s == "X"
+}
+
+fn number(s: String) -> Option[Int] {
+	if isDigits(s) && !(s.length() > 1 && s.startsWith("0")) { Int.parse(s) } else { None }
+}
+
+---
+Text split in two: a version's core and its pre-release tag, or a
+comparator's operator and its version.
+---
+type Split = {
+	head: String,
+	rest: String,
+}
+
+---
+`text` without its build metadata, split into its core and its pre-release
+tag (`""` for none).
+---
+fn coreAndPre(text: String) -> Split {
+	let noBuild = text.split("+").first().getOrElse("")
+	match noBuild.indexOf("-") {
+		Some(i) => Split { head: noBuild.slice(0, i), rest: noBuild.slice(i + 1, noBuild.length()) },
+		None => Split { head: noBuild, rest: "" },
+	}
+}
+
+---
+A version, as an index line's `version` carries it, or `None`.
+---
+fn parseVersion(text: String) -> Option[Version] {
+	let split = coreAndPre(text.trim())
+	let parts = split.head.split(".")
+	if parts.count() != 3 {
+		None
+	} else {
+		number(parts.first().getOrElse("")).andThen((ma) => number(parts.skip(1).first().getOrElse(""))
+			.andThen((mi) => number(parts.skip(2).first().getOrElse(""))
+				.map((pa) => Version { major: ma, minor: mi, patch: pa, pre: split.rest })))
+	}
+}
+
+fn sign(n: Int) -> Int {
+	if n < 0 { -1 } else { if n > 0 { 1 } else { 0 } }
+}
+
+---
+Compare two pre-release identifiers: numeric ones numerically and below
+alphanumeric ones, which compare as text.
+---
+fn compareIdentifier(a: String, b: String) -> Int {
+	let x: Option[Int] = if isDigits(a) { Int.parse(a) } else { None }
+	let y: Option[Int] = if isDigits(b) { Int.parse(b) } else { None }
+	match x {
+		Some(m) => match y {
+			Some(n) => sign(m - n),
+			None => -1,
+		},
+		None => match y {
+			Some(_) => 1,
+			None => if a < b { -1 } else { if a > b { 1 } else { 0 } },
+		},
+	}
+}
+
+fn comparePreFrom(xs: List[String], ys: List[String], i: Int) -> Int {
+	match xs.skip(i).first() {
+		None => if ys.skip(i).first() == None { 0 } else { -1 },
+		Some(x) => match ys.skip(i).first() {
+			None => 1,
+			Some(y) => {
+				let c = compareIdentifier(x, y)
+				if c != 0 { c } else { comparePreFrom(xs, ys, i + 1) }
+			},
+		},
+	}
+}
+
+---
+Compare two pre-release tags. No tag outranks any tag (`1.0.0` is above
+`1.0.0-rc.1`); otherwise identifiers compare left to right, and a tag that is
+a prefix of another is the lower.
+---
+fn comparePre(a: String, b: String) -> Int {
+	if a == b {
+		0
+	} else {
+		if a == "" {
+			1
+		} else {
+			if b == "" { -1 } else { comparePreFrom(a.split("."), b.split("."), 0) }
+		}
+	}
+}
+
+fn exact(v: Version, c: Comparator) -> Bool {
+	v.major == c.major
+		&& c.minor.map((m) => v.minor == m).getOrElse(true)
+		&& c.patch.map((p) => v.patch == p).getOrElse(true)
+		&& comparePre(v.pre, c.pre) == 0
+}
+
+fn greater(v: Version, c: Comparator) -> Bool {
+	if v.major != c.major {
+		v.major > c.major
+	} else {
+		match c.minor {
+			None => false,
+			Some(mi) => if v.minor != mi {
+				v.minor > mi
+			} else {
+				match c.patch {
+					None => false,
+					Some(pa) => if v.patch != pa { v.patch > pa } else { comparePre(v.pre, c.pre) > 0 },
+				}
+			},
+		}
+	}
+}
+
+fn less(v: Version, c: Comparator) -> Bool {
+	if v.major != c.major {
+		v.major < c.major
+	} else {
+		match c.minor {
+			None => false,
+			Some(mi) => if v.minor != mi {
+				v.minor < mi
+			} else {
+				match c.patch {
+					None => false,
+					Some(pa) => if v.patch != pa { v.patch < pa } else { comparePre(v.pre, c.pre) < 0 },
+				}
+			},
+		}
+	}
+}
+
+fn tilde(v: Version, c: Comparator) -> Bool {
+	v.major == c.major
+		&& match c.minor {
+			None => true,
+			Some(mi) => v.minor == mi
+				&& match c.patch {
+					None => true,
+					Some(pa) => if v.patch != pa { v.patch > pa } else { comparePre(v.pre, c.pre) >= 0 },
+				},
+		}
+}
+
+fn caret(v: Version, c: Comparator) -> Bool {
+	if v.major != c.major {
+		false
+	} else {
+		match c.minor {
+			None => true,
+			Some(mi) => match c.patch {
+				None => if c.major > 0 { v.minor >= mi } else { v.minor == mi },
+				Some(pa) => if c.major > 0 {
+					if v.minor != mi {
+						v.minor > mi
+					} else {
+						if v.patch != pa { v.patch > pa } else { comparePre(v.pre, c.pre) >= 0 }
+					}
+				} else {
+					if mi > 0 {
+						v.minor == mi
+							&& (if v.patch != pa { v.patch > pa } else { comparePre(v.pre, c.pre) >= 0 })
+					} else {
+						v.minor == mi && v.patch == pa && comparePre(v.pre, c.pre) >= 0
+					}
+				},
+			},
+		}
+	}
+}
+
+fn holds(v: Version, c: Comparator) -> Bool {
+	if c.op == "=" {
+		exact(v, c)
+	} else {
+		if c.op == ">" {
+			greater(v, c)
+		} else {
+			if c.op == ">=" {
+				exact(v, c) || greater(v, c)
+			} else {
+				if c.op == "<" {
+					less(v, c)
+				} else {
+					if c.op == "<=" {
+						exact(v, c) || less(v, c)
+					} else {
+						if c.op == "~" { tilde(v, c) } else { caret(v, c) }
+					}
+				}
+			}
+		}
+	}
+}
+
+---
+A comparator's operator and the rest of its text. No operator is a caret.
+---
+fn operator(text: String) -> Split {
+	let two = [">=", "<="].filter((o) => text.startsWith(o)).first()
+	let one = ["=", ">", "<", "~", "^"].filter((o) => text.startsWith(o)).first()
+	match two {
+		Some(o) => Split { head: o, rest: text.slice(2, text.length()).trim() },
+		None => match one {
+			Some(o) => Split { head: o, rest: text.slice(1, text.length()).trim() },
+			None => Split { head: "", rest: text },
+		},
+	}
+}
+
+---
+One comparator (`^1.2.3`, `>= 1.2`, `~1`, `1.*`, `=1.2.3-rc.1`), or why it
+isn't one. A wildcard leaves out the parts from it on, so `1.*` is `=1` and
+`>=1.*` is `>=1`.
+---
+fn parseComparator(text: String) -> Result[Comparator, String] {
+	let opSplit = operator(text.trim())
+	let op = opSplit.head
+	let versionSplit = coreAndPre(opSplit.rest)
+	let core = versionSplit.head
+	let pre = versionSplit.rest
+	let parts = core.split(".")
+	let first = parts.first().getOrElse("")
+	let second = parts.skip(1).first()
+	let third = parts.skip(2).first()
+	let wild = parts.any((p) => isWildcard(p))
+	if parts.count() > 3 || core == "" {
+		Err("`\(text)` isn't a version")
+	} else {
+		if wild && pre != "" {
+			Err("`\(text)` puts a wildcard where it can't go")
+		} else {
+			match number(first) {
+				None => Err("`\(text)` has no major version"),
+				Some(major) => {
+					let minor = second.andThen((s) => number(s))
+					let patch = third.andThen((s) => number(s))
+					let badMinor = second.map((s) => !isWildcard(s) && number(s) == None).getOrElse(false)
+					let badPatch = third.map((s) => !isWildcard(s) && number(s) == None).getOrElse(false)
+					let wildThenNumber = second.map((s) => isWildcard(s)).getOrElse(false)
+						&& third.map((s) => !isWildcard(s)).getOrElse(false)
+					if badMinor || badPatch || wildThenNumber {
+						Err("`\(text)` isn't a version")
+					} else {
+						if pre != "" && patch == None {
+							Err("`\(text)` has a pre-release tag but no patch version")
+						} else {
+							Ok(Comparator {
+								op: if op != "" { op } else { if wild { "=" } else { "^" } },
+								major: major,
+								minor: minor,
+								patch: patch,
+								pre: pre,
+							})
+						}
+					}
+				},
+			}
+		}
+	}
+}
+
+fn parseAll(texts: List[String], i: Int) -> Result[List[Comparator], String] {
+	match texts.skip(i).first() {
+		None => Ok([]),
+		Some(t) => match parseComparator(t) {
+			Err(e) => Err(e),
+			Ok(c) => match parseAll(texts, i + 1) {
+				Err(e) => Err(e),
+				Ok(cs) => Ok([c].concat(cs)),
+			},
+		},
+	}
+}
+
+---
+A range's comparators, or why it isn't a range. `*` alone is no comparators:
+any version but a pre-release.
+---
+fn parseRange(range: String) -> Result[List[Comparator], String] {
+	let trimmed = range.trim()
+	if isWildcard(trimmed) { Ok([]) } else { parseAll(trimmed.split(","), 0) }
+}
+
+---
+Whether `range` admits `version`, or why either can't be read. Every
+comparator must hold. A pre-release is admitted only when a comparator names a
+pre-release of the same `MAJOR.MINOR.PATCH`, as Cargo has it.
+---
+fn admits(range: String, version: String) -> Result[Bool, String] {
+	match parseVersion(version) {
+		None => Err("`\(version)` isn't a version"),
+		Some(v) => match parseRange(range) {
+			Err(e) => Err(e),
+			Ok(cs) => Ok(cs.all((c) => holds(v, c))
+				&& (v.pre == ""
+					|| cs.any((c) => c.pre != ""
+						&& c.major == v.major
+						&& c.minor == Some(v.minor)
+						&& c.patch == Some(v.patch)))),
+		},
+	}
+}
