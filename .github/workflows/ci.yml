@@ -57,10 +57,12 @@ jobs:
           bynk fmt --check .
           bynk check
           bynk test
-      - name: Read path, end to end (seed, serve, conformance)
+      - name: Read path, end to end (seed, serve, conformance, caching headers)
         run: scripts/check-read-path.sh
       - name: Publish API, end to end (full conformance, the real client, a stray key)
         run: scripts/check-publish.sh
+      - name: The publication rule, end to end (dependencies must resolve here)
+        run: scripts/check-publication.sh
       - name: Accounts, end to end (a fake GitHub, claims, tokens, conformance)
         run: scripts/check-accounts.sh
       - name: Trusted publishing, end to end (a fake OIDC issuer, the exchange, conformance)

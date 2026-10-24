@@ -8,7 +8,9 @@
 # against its SHA256SUMS; nothing is built from source.
 #
 # Staging deploys first and is held to the protocol: a full conformance run,
-# and a trusted-publishing exchange with this workflow's own OIDC token. Then
+# a check of the edge cache with anonymous reads (an archive is a cache hit,
+# and a takedown purges it), and a trusted-publishing exchange with this
+# workflow's own OIDC token. Then
 # production waits for an approval (the `registry-production` environment's
 # required reviewers), deploys, and passes the read checks. A release
 # candidate (`-rc`) goes to staging only. Rollback is deploying the previous
@@ -117,7 +119,58 @@ jobs:
           ROOT: ${{ vars.REGISTRY_ROOT_KEY }}
           BYNK_REGISTRY_CONFORMANCE_TOKEN: ${{ secrets.REGISTRY_CONFORMANCE_TOKEN }}
           NARROW: ${{ secrets.REGISTRY_NARROW_TOKEN }}
-        run: bynk registry conformance "$URL" --org "$ORG" --key "$ROOT" --narrow-token-env NARROW
+        # As JSON, so the next step can find the throwaway package it published.
+        run: |
+          status=0
+          bynk registry conformance "$URL" --org "$ORG" --key "$ROOT" --narrow-token-env NARROW \
+            --format json > "$RUNNER_TEMP/conformance.json" || status=$?
+          jq -r '.checks[] | "\(.outcome)\t\(.id)\t\(.detail)"' "$RUNNER_TEMP/conformance.json"
+          exit "$status"
+      # Conformance reads with its publish token, so it says nothing about what
+      # an anonymous consumer gets. `bynk dev` has no edge cache, so this is the
+      # only place the cache is checked (R6.1, bynk-lang/bynk#2413; ADR 0613 F).
+      # The archive of the version conformance just published: a second
+      # anonymous fetch must be an edge hit; a takedown must purge it, so the
+      # next fetch is the origin's 404, not the cached bytes.
+      - name: The edge cache, anonymously (a hit, then a takedown purges it)
+        env:
+          URL: ${{ vars.REGISTRY_URL }}
+          WITHDRAW: ${{ secrets.REGISTRY_WITHDRAW_TOKEN }}
+        run: |
+          [[ -n "$WITHDRAW" ]] || { echo "staging needs REGISTRY_WITHDRAW_TOKEN, a withdraw-only operator token, for the purge check" >&2; exit 1; }
+          base="${URL%/}"
+          package="$(jq -r '.published // empty' "$RUNNER_TEMP/conformance.json")"
+          [[ -n "$package" ]] || { echo "conformance published no package" >&2; exit 1; }
+          hex="$(curl -sf "$base/$package" | python3 -c '
+          import base64, json, sys
+          for l in sys.stdin:
+              line = json.loads(l)
+              if line["version"] == "0.0.1":
+                  print(base64.b64decode(line["checksum"][7:]).hex())')"
+          [[ -n "$hex" ]] || { echo "the index of $package has no 0.0.1" >&2; exit 1; }
+          archive="$base/dl/sha256/$hex"
+          cache_status() { curl -s -o /dev/null -D - "$archive" | tr -d '\r' | awk 'tolower($1) == "cf-cache-status:" { print toupper($2) }'; }
+          # The first fetch may already hit: conformance fetched it too, and a
+          # `public` answer to a request with a token is shared (ADR 0613 G).
+          curl -sf -o /dev/null "$archive" || { echo "$archive isn't served" >&2; exit 1; }
+          hit=
+          for _ in 1 2 3; do
+            seen="$(cache_status)"
+            [[ "$seen" == HIT ]] && { hit=1; break; }
+            sleep 2
+          done
+          [[ -n "$hit" ]] || { echo "a repeated anonymous fetch of $archive was \`${seen:-no cf-cache-status}\`, not HIT" >&2; exit 1; }
+          echo "an anonymous fetch of $package 0.0.1's archive is an edge hit"
+          status="$(curl -s -o takedown.json -w '%{http_code}' -X POST "$base/_operator/withdraw/$package/0.0.1" \
+            -H "Authorization: Bearer $WITHDRAW" -H 'content-type: application/json' \
+            --data '{"reason":"Withdrawn by the staging deploy check of the edge cache"}')"
+          [[ "$status" == 200 && "$(jq -r .edge takedown.json)" == purged ]] ||
+            { echo "the takedown was $status: $(jq -c . takedown.json)" >&2; exit 1; }
+          rm -f takedown.json
+          after="$(curl -s -o /dev/null -D - -w 'status:%{http_code}\n' "$archive" | tr -d '\r')"
+          grep -q '^status:404$' <<<"$after" || { echo "after the takedown, $archive was still served: $after" >&2; exit 1; }
+          if grep -qi '^cf-cache-status: *HIT' <<<"$after"; then echo "after the takedown, the edge still answered for $archive" >&2; exit 1; fi
+          echo "the takedown purged it: the next fetch is the origin's 404"
       - name: Trusted publishing, with this job's own OIDC token
         env:
           URL: ${{ vars.REGISTRY_URL }}
