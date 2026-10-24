@@ -55,12 +55,13 @@ agent Takedowns {
 	}
 
 	---
-	Whether a takedown of `package` `version` is logged as having purged the
-	edge's copy of its archive.
+	Whether a takedown is logged as having purged the edge's copy of the
+	archive `checksum` names. Keyed by the tree, not the version: versions that
+	share a tree share its one copy at the edge.
 	---
-	on call purged(package: String, version: String) -> Effect[Bool] {
+	on call purged(checksum: String) -> Effect[Bool] {
 		let rs = records
-		rs.any((r) => r.package == package && r.version == version && r.edge == "purged")
+		rs.any((r) => r.checksum == checksum && r.edge == "purged")
 	}
 }
 
@@ -231,11 +232,11 @@ provides Takedown = BucketTakedown given Store, Backup, Clock, IndexFiles, Edge 
 					// bytes are given back after the store's delete, so an archive
 					// still in the store was never refunded; one never logged is
 					// logged now (the export's sweep reads the log); and the edge
-					// is purged unless a purge of it is logged.
+					// is purged unless a purge of this tree is logged.
 					let held <- Store.head(key)
 					let backed <- Backup.head(key)
 					let known <- Takedowns(takedownLog()).holds(name, version)
-					let purgedBefore <- Takedowns(takedownLog()).purged(name, version)
+					let purgedBefore <- Takedowns(takedownLog()).purged(line.checksum)
 					let _ <- Store.delete(key)
 					let _ <- Backup.delete(key)
 					let _ <- match held {

@@ -281,6 +281,54 @@ suite registry.store {
 		expect records.map((t) => t.edge) == ["purge_failed", "purged"]
 	}
 
+	case "a version taken down while its tree was shared is done once a later takedown purges the tree" {
+		stub Secrets.get("REGISTRY_TOKENS") returns Some("[{\"sha256\":\"64\",\"organisations\":[],\"can\":[\"withdraw\"]}]")
+		stub Crypto.digest(_, _) returns Bytes.fromUtf8("d")
+		let key = "dl/sha256/0000000000000000000000000000000000000000000000000000000000000000"
+		let sample = (version: String) => Line {
+			name: "acme/money",
+			version: version,
+			checksum: "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+			deps: [],
+			npm: [],
+			toolchain: None,
+			yanked: false,
+			withdrawn: None,
+			sig: "c2ln",
+		}
+		let _ <- PackageIndex("acme/money").append(sample("1.0.0"))
+		let _ <- PackageIndex("acme/money").append(sample("1.0.1"))
+		let _ <- Store.put(key, Bytes.fromUtf8("tree"))
+		let kept <- operator.POST(
+			"/_operator/withdraw/:org/:package/:version",
+			"acme",
+			"money",
+			"1.0.0",
+			WithdrawRequest { reason: "a takedown" },
+			RequestHeaders.of(["Authorization: Bearer op"])
+		) by Visitor
+		expect kept is Ok(a) && a.edge == "kept"
+		let purged <- operator.POST(
+			"/_operator/withdraw/:org/:package/:version",
+			"acme",
+			"money",
+			"1.0.1",
+			WithdrawRequest { reason: "a takedown" },
+			RequestHeaders.of(["Authorization: Bearer op"])
+		) by Visitor
+		expect purged is Ok(a) && a.archive == "deleted" && a.edge == "purged"
+		let again <- operator.POST(
+			"/_operator/withdraw/:org/:package/:version",
+			"acme",
+			"money",
+			"1.0.0",
+			WithdrawRequest { reason: "a takedown" },
+			RequestHeaders.of(["Authorization: Bearer op"])
+		) by Visitor
+		expect again is RawError(409, _, _)
+		expect Edge.purge called once
+	}
+
 	case "an archive another live version names is kept" {
 		stub Secrets.get("REGISTRY_TOKENS") returns Some("[{\"sha256\":\"64\",\"organisations\":[],\"can\":[\"withdraw\"]}]")
 		stub Crypto.digest(_, _) returns Bytes.fromUtf8("d")

@@ -91,17 +91,18 @@ claim held true
 
 # Pack `<org>/<package>` at `<version>`, depending on `<deps>` (TOML lines for
 # `[dependencies]`), without resolving them: the client would refuse what the
-# server must be shown refusing. Prints the archive's path.
-n=0
+# server must be shown refusing. Each package and version is packed once, into
+# a scratch registry of its own. Prints the archive's path.
 pack() { # pack <org/package> <version> [<deps>]
-  n=$((n + 1))
-  local dir="$work/pkgs/$n" scratch="$work/packs/$n"
+  local id="${1//\//_}-$2"
+  local dir="$work/pkgs/$id" scratch="$work/packs/$id"
+  [[ ! -e "$dir" ]] || fail "$1 $2 was packed twice"
   mkdir -p "$dir/src"
   printf '[package]\nname = "%s"\nversion = "%s"\n\n[dependencies]\n%s\n' "$1" "$2" "${3:-}" >"$dir/bynk.toml"
-  printf 'commons probe\n\nfn value() -> Int {\n  %s\n}\n' "$n" >"$dir/src/probe.bynk"
-  "$bynk" registry init "$scratch" --id scratch --key-out "$work/packs/$n.key" >/dev/null 2>&1
-  "$bynk" registry add "$scratch" "$dir" --key "$work/packs/$n.key" >/dev/null 2>&1 || fail "couldn't pack $1 $2"
-  find "$scratch/dl/sha256" -type f | head -1
+  printf 'commons probe\n\nfn value() -> String {\n  "%s"\n}\n' "$id" >"$dir/src/probe.bynk"
+  "$bynk" registry init "$scratch" --id scratch --key-out "$work/packs/$id.key" >/dev/null 2>&1
+  "$bynk" registry add "$scratch" "$dir" --key "$work/packs/$id.key" >/dev/null 2>&1 || fail "couldn't pack $1 $2"
+  find "$scratch/dl/sha256" -type f
 }
 put() { # put <org/package> <version> <archive>: the status, body in $work/put.json
   curl -s -o "$work/put.json" -w '%{http_code}' -X PUT "$url/api/$1/$2" \

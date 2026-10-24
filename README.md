@@ -413,8 +413,8 @@ is purged, so it counts as interrupted.
 A repeat is `409 withdrawn`, unless it finishes an interrupted takedown, which
 answers `200` with `"archive": "finished"`. Finishing deletes what's left,
 refunds the quota if the first attempt didn't, logs the takedown if it wasn't
-logged, and purges the edge unless a takedown of the version is logged as
-having purged it. **Run it again whenever a takedown didn't answer `200`, or
+logged, and purges the edge unless a takedown is logged as having purged that
+archive. **Run it again whenever a takedown didn't answer `200`, or
 answered `"edge": "purge_failed"`,** until it answers `409` or
 `"edge": "purged"`.
 

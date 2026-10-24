@@ -69,7 +69,7 @@ hex="$(curl -s "$url/conformance-fixture/hello" | python3 -c '
 import base64, json, sys
 print(base64.b64decode(json.loads(sys.stdin.readline())["checksum"][7:]).hex())')"
 cc="$(header cache-control "$url/dl/sha256/$hex")"
-[[ "$cc" == *immutable* && "$cc" == *public* ]] || fail "the archive is sent \`cache-control: $cc\`, not an immutable public one"
+[[ "$cc" == "public, max-age=31536000, immutable" ]] || fail "the archive is sent \`cache-control: $cc\`, not \`public, max-age=31536000, immutable\`"
 [[ "$(header etag "$url/dl/sha256/$hex")" == "\"$hex\"" ]] || fail "the archive's etag isn't its digest"
 [[ "$(status "$url/dl/sha256/$hex" -H "if-none-match: \"$hex\"")" == 304 ]] || fail "the archive doesn't answer 304 to its digest"
 missing="$url/dl/sha256/$(printf '0%.0s' $(seq 1 64))"
