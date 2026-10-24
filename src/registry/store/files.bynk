@@ -15,7 +15,7 @@ capability Store = R2
 Cloudflare's edge cache for this context's Worker (L7, ADR 0613): declaring it
 turns Workers Cache on, so a `@cache` route's `2xx` is kept at the edge and
 every other `GET` answer is `no-store`. A takedown purges an archive's path
-(`operator.bynk`); nothing else purges.
+(`operator.bynk`), and a yank or an un-yank its index file (`publish.bynk`).
 ---
 capability Edge = EdgeCache
 
@@ -28,8 +28,8 @@ archive it reads.
 Cached at the edge (R6.1, decisions B and C). `config.json` and the index
 files change in place (a delegation, a revocation, a yank, a withdrawal), so
 they are kept for 60 seconds at most, and revalidate against their `ETag`.
-That is the stated bound on a stale read: purging on every write would run
-into the purge rate limit. An archive is content-addressed, so it never
+That is the stated bound on a stale read. A yank or an un-yank purges its
+index at once; purging on every publish would run into the purge rate limit. An archive is content-addressed, so it never
 changes: it is `immutable`, with its digest as a strong `ETag`, and only a
 takedown purges it. Each route serves every caller alike (`by Visitor`), as a
 `public` route in a context with an edge cache must.

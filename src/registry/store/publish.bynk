@@ -715,7 +715,7 @@ service api from http {
 		package: String,
 		version: String,
 		headers: RequestHeaders
-	) -> Effect[HttpResult[Yanked]] by v: Visitor given Limits, Tokens {
+	) -> Effect[HttpResult[Yanked]] by v: Visitor given Limits, Tokens, Edge {
 		let allowed <- Limits.write(headers.clientIp(), headers.bearer())
 		if !allowed {
 			rateLimited[Yanked]()
@@ -736,7 +736,10 @@ service api from http {
 							"application/json"
 						),
 						IndexUnreadable(why) => problemAt500[Yanked](why),
-						Changed => Ok(Yanked { ok: true }),
+						Changed => {
+							let _ <- Edge.purge(indexPurge(org, package))
+							Ok(Yanked { ok: true })
+						},
 					}
 				},
 			}
@@ -748,7 +751,7 @@ service api from http {
 		package: String,
 		version: String,
 		headers: RequestHeaders
-	) -> Effect[HttpResult[Yanked]] by v: Visitor given Limits, Tokens {
+	) -> Effect[HttpResult[Yanked]] by v: Visitor given Limits, Tokens, Edge {
 		let allowed <- Limits.write(headers.clientIp(), headers.bearer())
 		if !allowed {
 			rateLimited[Yanked]()
@@ -769,7 +772,10 @@ service api from http {
 							"application/json"
 						),
 						IndexUnreadable(why) => problemAt500[Yanked](why),
-						Changed => Ok(Yanked { ok: true }),
+						Changed => {
+							let _ <- Edge.purge(indexPurge(org, package))
+							Ok(Yanked { ok: true })
+						},
 					}
 				},
 			}
@@ -809,6 +815,19 @@ service api from http {
 			),
 		}
 	}
+}
+
+---
+What to purge from the edge for a package's index file after a yank or an
+un-yank (R6.1), so the change is seen at once rather than within the index
+files' 60 seconds. Only these purge an index: a publish adds a line a stale
+read merely lacks, and purging on every publish would run into Cloudflare's
+purge rate limit. A refused purge changes nothing here: the yank stands, and
+the 60-second bound still holds. The prefix also purges a package whose name
+extends this one (`money_x`), which costs only a cache miss.
+---
+fn indexPurge(org: String, package: String) -> List[String] {
+	["/\(org)/\(package)"]
 }
 
 ---

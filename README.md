@@ -112,8 +112,12 @@ the Worker:
 - **60 seconds is the bound on a stale read.** `config.json` and the index
   files change in place: a delegation or a revocation, a yank, a withdrawal.
   Anyone reading through the edge sees such a change within a minute.
-  Nothing purges them, because purging on every write would run into the
-  purge rate limit.
+- **A yank or an un-yank purges its index file** (`/<org>/<package>`), so it
+  is seen at once. A publish doesn't: a stale read only lacks the new line for
+  up to a minute, and purging on every publish would run into the purge rate
+  limit. If Cloudflare refuses a yank's purge, the yank still stands and the
+  60-second bound still holds. A staging conformance run depends on this purge:
+  it reads an index, yanks, and reads it again within seconds.
 - **An archive never changes,** so it is kept for good. Only a takedown purges
   it (see "Takedowns").
 - **Everyone gets the same answer.** The edge keys a response by its URL alone,

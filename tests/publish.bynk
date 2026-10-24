@@ -139,6 +139,75 @@ suite registry.store {
 		expect missing is NoSuchVersion
 	}
 
+	case "a yank and an un-yank purge the index file from the edge; a missing version purges nothing" {
+		stub Secrets.get("REGISTRY_TOKENS") returns Some("[{\"sha256\":\"64\",\"organisations\":[\"acme\"],\"can\":[\"yank\"]}]")
+		stub Crypto.digest(_, _) returns Bytes.fromUtf8("d")
+		let _ <- PackageIndex("acme/money").append(Line {
+			name: "acme/money",
+			version: "1.0.0",
+			checksum: "sha256-AAAA",
+			deps: [],
+			npm: [],
+			toolchain: None,
+			yanked: false,
+			withdrawn: None,
+			sig: "c2ln",
+		})
+		let yanked <- api.POST(
+			"/api/:org/:package/:version/yank",
+			"acme",
+			"money",
+			"1.0.0",
+			RequestHeaders.of(["Authorization: Bearer op"])
+		) by Visitor
+		expect yanked is Ok(y) && y.ok
+		expect Edge.purge called once with prefixes == ["/acme/money"]
+		let unyanked <- api.POST(
+			"/api/:org/:package/:version/unyank",
+			"acme",
+			"money",
+			"1.0.0",
+			RequestHeaders.of(["Authorization: Bearer op"])
+		) by Visitor
+		expect unyanked is Ok(_)
+		let missing <- api.POST(
+			"/api/:org/:package/:version/yank",
+			"acme",
+			"money",
+			"9.9.9",
+			RequestHeaders.of(["Authorization: Bearer op"])
+		) by Visitor
+		expect missing is RawError(404, _, _)
+		expect Edge.purge called 2 times
+	}
+
+	case "a refused purge doesn't undo a yank: the 60-second bound still holds" {
+		stub Secrets.get("REGISTRY_TOKENS") returns Some("[{\"sha256\":\"64\",\"organisations\":[\"acme\"],\"can\":[\"yank\"]}]")
+		stub Crypto.digest(_, _) returns Bytes.fromUtf8("d")
+		stub Edge.purge(_) returns false
+		let _ <- PackageIndex("acme/money").append(Line {
+			name: "acme/money",
+			version: "1.0.0",
+			checksum: "sha256-AAAA",
+			deps: [],
+			npm: [],
+			toolchain: None,
+			yanked: false,
+			withdrawn: None,
+			sig: "c2ln",
+		})
+		let yanked <- api.POST(
+			"/api/:org/:package/:version/yank",
+			"acme",
+			"money",
+			"1.0.0",
+			RequestHeaders.of(["Authorization: Bearer op"])
+		) by Visitor
+		expect yanked is Ok(_)
+		let held <- PackageIndex("acme/money").snapshot()
+		expect held is Ok(ls) && ls.map((l) => l.yanked) == [true]
+	}
+
 	case "an index file round-trips; a line that doesn't parse is an error" {
 		let sample = (version: String, checksum: String) => Line {
 			name: "acme/money",
