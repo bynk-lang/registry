@@ -1,0 +1,129 @@
+// The publication rule (first-party registry R6.1, bynk-lang/bynk#2413,
+// decision D; packaging §6.2): a package published here may depend only on
+// what resolves here. It is this service's policy, not the protocol's, so it
+// lives here and not in `bynk-registry-core`: a private registry may accept
+// first-party dependencies.
+context registry.store
+
+uses registry.paths
+uses registry.ranges
+consumes registry.admission { Admit }
+
+---
+Whether a package's registry dependencies all resolve here: yes, the first
+that doesn't and why, or an index this service couldn't read.
+---
+type Publishable =
+	| Resolvable
+	| Unresolvable(why: String)
+	| PublicationUnreadable(why: String)
+
+---
+Every registry dependency resolves here: its organisation is claimed and not
+blocked (a blocked name is a private organisation, routed elsewhere), and its
+package has a version that isn't withdrawn and that the range admits. A
+yanked version counts: yanking keeps a version resolvable for existing locks,
+and the rule asks whether a consumer can resolve, not which version they get.
+---
+capability Publication {
+	fn check(deps: List[Requirement]) -> Effect[Publishable]
+}
+
+provides Publication = IndexedPublication given IndexFiles {
+	fn check(deps: List[Requirement]) -> Effect[Publishable] {
+		// Each dependency in turn; the first that doesn't resolve stops the walk.
+		let walked <- deps.traverseTry(
+			(dep) => match nameProblem(dep) {
+				Some(why) => Effect.pure(stop(Unresolvable(why))),
+				None => {
+					let org = dep.package.split("/").first().getOrElse("")
+					let status <- Organisation(org).status(None)
+					if !status.claimed {
+						Effect.pure(stop(Unresolvable(
+							"`\(dep.package)`: no organisation `\(org)` is claimed on this registry"
+						)))
+					} else {
+						if status.blocked {
+							Effect.pure(stop(
+								Unresolvable(
+									"`\(dep.package)`: the organisation `\(org)` is blocked on this registry, so nothing in it resolves here"
+								)
+							))
+						} else {
+							let known <- PackageIndex(dep.package).snapshot()
+							Effect.pure(match known {
+								Err(why) => stop(PublicationUnreadable(why)),
+								Ok(lines) => match inRange(dep, lines) {
+									Resolvable => carryOn(),
+									other => stop(other),
+								},
+							})
+						}
+					}
+				},
+			}
+		)
+		Effect.pure(match walked {
+			Ok(_) => Resolvable,
+			Err(verdict) => verdict,
+		})
+	}
+}
+
+---
+The walk over a package's dependencies goes on, or stops at a verdict.
+---
+fn carryOn() -> Result[(), Publishable] {
+	Ok(())
+}
+
+fn stop(verdict: Publishable) -> Result[(), Publishable] {
+	Err(verdict)
+}
+
+---
+Why a dependency's name can't be a package here, or `None`.
+---
+fn nameProblem(dep: Requirement) -> Option[String] {
+	let parts = dep.package.split("/")
+	let org = parts.first().getOrElse("")
+	let package = parts.skip(1).first().getOrElse("")
+	if parts.count() != 2 || indexKey(org, package) == None {
+		Some("`\(dep.package)` isn't a package name this registry can hold")
+	} else {
+		None
+	}
+}
+
+---
+Whether `lines` hold a version `dep`'s range admits that isn't withdrawn.
+---
+fn inRange(dep: Requirement, lines: List[Line]) -> Publishable {
+	if lines.length() == 0 {
+		Unresolvable("`\(dep.package)` isn't published on this registry")
+	} else {
+		admittedIn(dep, lines)
+	}
+}
+
+fn admittedIn(dep: Requirement, lines: List[Line]) -> Publishable {
+	match admits(dep.range, "0.0.0") {
+		Err(why) => Unresolvable("`\(dep.package)`'s range `\(dep.range)` can't be read: \(why)"),
+		Ok(_) => {
+			let admitted = lines.filter((l) => admits(dep.range, l.version) == Ok(true))
+			if admitted.any((l) => l.withdrawn == None) {
+				Resolvable
+			} else {
+				if admitted.length() == 0 {
+					Unresolvable(
+						"no version of `\(dep.package)` on this registry is in `\(dep.range)`"
+					)
+				} else {
+					Unresolvable(
+						"every version of `\(dep.package)` in `\(dep.range)` was withdrawn from this registry"
+					)
+				}
+			}
+		},
+	}
+}

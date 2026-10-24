@@ -58,8 +58,14 @@ tag (`""` for none).
 fn coreAndPre(text: String) -> Split {
 	let noBuild = text.split("+").first().getOrElse("")
 	match noBuild.indexOf("-") {
-		Some(i) => Split { head: noBuild.slice(0, i), rest: noBuild.slice(i + 1, noBuild.length()) },
-		None => Split { head: noBuild, rest: "" },
+		Some(i) => Split {
+			head: noBuild.slice(0, i),
+			rest: noBuild.slice(i + 1, noBuild.length()),
+		},
+		None => Split {
+			head: noBuild,
+			rest: "",
+		},
 	}
 }
 
@@ -72,9 +78,12 @@ fn parseVersion(text: String) -> Option[Version] {
 	if parts.count() != 3 {
 		None
 	} else {
-		number(parts.first().getOrElse("")).andThen((ma) => number(parts.skip(1).first().getOrElse(""))
-			.andThen((mi) => number(parts.skip(2).first().getOrElse(""))
-				.map((pa) => Version { major: ma, minor: mi, patch: pa, pre: split.rest })))
+		number(parts.first().getOrElse("")).andThen((ma) => number(parts
+			.skip(1)
+			.first()
+			.getOrElse("")).andThen((mi) => number(parts.skip(2).first().getOrElse("")).map(
+			(pa) => Version { major: ma, minor: mi, patch: pa, pre: split.rest }
+		)))
 	}
 }
 
@@ -149,7 +158,11 @@ fn greater(v: Version, c: Comparator) -> Bool {
 			} else {
 				match c.patch {
 					None => false,
-					Some(pa) => if v.patch != pa { v.patch > pa } else { comparePre(v.pre, c.pre) > 0 },
+					Some(pa) => if v.patch != pa {
+						v.patch > pa
+					} else {
+						comparePre(v.pre, c.pre) > 0
+					},
 				}
 			},
 		}
@@ -167,7 +180,11 @@ fn less(v: Version, c: Comparator) -> Bool {
 			} else {
 				match c.patch {
 					None => false,
-					Some(pa) => if v.patch != pa { v.patch < pa } else { comparePre(v.pre, c.pre) < 0 },
+					Some(pa) => if v.patch != pa {
+						v.patch < pa
+					} else {
+						comparePre(v.pre, c.pre) < 0
+					},
 				}
 			},
 		}
@@ -181,7 +198,11 @@ fn tilde(v: Version, c: Comparator) -> Bool {
 			Some(mi) => v.minor == mi
 				&& match c.patch {
 					None => true,
-					Some(pa) => if v.patch != pa { v.patch > pa } else { comparePre(v.pre, c.pre) >= 0 },
+					Some(pa) => if v.patch != pa {
+						v.patch > pa
+					} else {
+						comparePre(v.pre, c.pre) >= 0
+					},
 				},
 		}
 }
@@ -203,7 +224,11 @@ fn caret(v: Version, c: Comparator) -> Bool {
 				} else {
 					if mi > 0 {
 						v.minor == mi
-							&& (if v.patch != pa { v.patch > pa } else { comparePre(v.pre, c.pre) >= 0 })
+							&& (if v.patch != pa {
+								v.patch > pa
+							} else {
+								comparePre(v.pre, c.pre) >= 0
+							})
 					} else {
 						v.minor == mi && v.patch == pa && comparePre(v.pre, c.pre) >= 0
 					}
@@ -244,10 +269,19 @@ fn operator(text: String) -> Split {
 	let two = [">=", "<="].filter((o) => text.startsWith(o)).first()
 	let one = ["=", ">", "<", "~", "^"].filter((o) => text.startsWith(o)).first()
 	match two {
-		Some(o) => Split { head: o, rest: text.slice(2, text.length()).trim() },
+		Some(o) => Split {
+			head: o,
+			rest: text.slice(2, text.length()).trim(),
+		},
 		None => match one {
-			Some(o) => Split { head: o, rest: text.slice(1, text.length()).trim() },
-			None => Split { head: "", rest: text },
+			Some(o) => Split {
+				head: o,
+				rest: text.slice(1, text.length()).trim(),
+			},
+			None => Split {
+				head: "",
+				rest: text,
+			},
 		},
 	}
 }
@@ -279,8 +313,12 @@ fn parseComparator(text: String) -> Result[Comparator, String] {
 				Some(major) => {
 					let minor = second.andThen((s) => number(s))
 					let patch = third.andThen((s) => number(s))
-					let badMinor = second.map((s) => !isWildcard(s) && number(s) == None).getOrElse(false)
-					let badPatch = third.map((s) => !isWildcard(s) && number(s) == None).getOrElse(false)
+					let badMinor = second
+						.map((s) => !isWildcard(s) && number(s) == None)
+						.getOrElse(false)
+					let badPatch = third
+						.map((s) => !isWildcard(s) && number(s) == None)
+						.getOrElse(false)
 					let wildThenNumber = second.map((s) => isWildcard(s)).getOrElse(false)
 						&& third.map((s) => !isWildcard(s)).getOrElse(false)
 					if badMinor || badPatch || wildThenNumber {
