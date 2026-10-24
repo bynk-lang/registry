@@ -84,7 +84,7 @@ agent PackageIndex {
 				Some(old) => if old.withdrawn.isSome() {
 					WasWithdrawn
 				} else {
-					if old.checksum == checksum { Appendable } else { OtherTree }
+					if old.checksum == checksum { SameTree } else { OtherTree }
 				},
 			},
 		}
@@ -197,6 +197,7 @@ the same tree), refuse another tree, or refuse a withdrawn version.
 ---
 type Outlook =
 	| Appendable
+	| SameTree
 	| OtherTree
 	| WasWithdrawn
 	| OutlookUnreadable(why: String)
@@ -576,13 +577,7 @@ service api from http {
 	}
 
 	@raw(contentType: "application/vnd.bynk.tree-v1")
-	on PUT("/api/:org/:package/:version") (
-		org: String,
-		package: String,
-		version: String,
-		body: Bytes,
-		headers: RequestHeaders
-	) -> Effect[HttpResult[Line]] by v: Visitor given Limits, Tokens, Admit, Store, Signing, Quota {
+	on PUT("/api/:org/:package/:version") (org: String, package: String, version: String, body: Bytes, headers: RequestHeaders) -> Effect[HttpResult[Line]] by v: Visitor given Limits, Tokens, Admit, Store, Signing, Quota, Publication {
 		let allowed <- Limits.write(headers.clientIp(), headers.bearer())
 		if !allowed {
 			rateLimited[Line]()
@@ -624,48 +619,82 @@ service api from http {
 											OtherTree => versionExists(name, version),
 											WasWithdrawn => withdrawnVersion(name, version),
 											OutlookUnreadable(why) => problemAt500[Line](why),
-											Appendable => {
-												let signed <- Signing.sign(unsigned(a))
-												match signed {
-													Err(why) => problemAt500[Line](why),
-													Ok(line) => {
-														// Content-addressed: an archive already there is this one.
-														let _ <- Store.putWith(
-															key,
-															a.archive,
-															R2Put {
-																contentType: Some("application/vnd.bynk.tree-v1"),
-																metadata: Map.empty(),
-																onlyIf: Absent,
-															}
-														)
-														let appended <- PackageIndex(name).append(
-															line
-														)
-														match appended {
-															Exists => versionExists(name, version),
-															Fresh(l) => {
-																let _ <- Quota.count(org, size)
-																RawCreated(
-																	Bytes.fromUtf8(renderLine(l)),
-																	"application/json"
+											fresh => {
+												// The publication rule (R6.1, decision D), unless this is a
+												// retry of the very tree: it was admitted once (D10), and
+												// refusing it now would make a transient failure permanent.
+												let resolvable: Publishable = Resolvable
+												let verdict <- if fresh == SameTree {
+													Effect.pure(resolvable)
+												} else {
+													Publication.check(a.deps)
+												}
+												match verdict {
+													Unresolvable(why) => RawError(
+														BadRequest,
+														problem("unpublishable_dependency", why),
+														"application/json"
+													),
+													PublicationUnreadable(why) => problemAt500[Line](
+														why
+													),
+													Resolvable => {
+														let signed <- Signing.sign(unsigned(a))
+														match signed {
+															Err(why) => problemAt500[Line](why),
+															Ok(line) => {
+																// Content-addressed: an archive already there is this one.
+																let _ <- Store.putWith(
+																	key,
+																	a.archive,
+																	R2Put {
+																		contentType: Some("application/vnd.bynk.tree-v1"),
+																		metadata: Map.empty(),
+																		onlyIf: Absent,
+																	}
 																)
+																let appended <- PackageIndex(name).append(
+																	line
+																)
+																match appended {
+																	Exists => versionExists(
+																		name,
+																		version
+																	),
+																	Fresh(l) => {
+																		let _ <- Quota.count(
+																			org,
+																			size
+																		)
+																		RawCreated(
+																			Bytes.fromUtf8(
+																				renderLine(l)
+																			),
+																			"application/json"
+																		)
+																	},
+																	Retry(l) => Raw(
+																		Bytes.fromUtf8(renderLine(
+																			l
+																		)),
+																		"application/json"
+																	),
+																	Withdrawn => {
+																		// A takedown landed after `outlook`, and this
+																		// upload may have put its archive back. No other
+																		// line shares the tree (the tree's manifest names
+																		// this version), so it goes again (R5a.2).
+																		let _ <- Store.delete(key)
+																		withdrawnVersion(
+																			name,
+																			version
+																		)
+																	},
+																	Unreadable(why) => problemAt500[Line](
+																		why
+																	),
+																}
 															},
-															Retry(l) => Raw(
-																Bytes.fromUtf8(renderLine(l)),
-																"application/json"
-															),
-															Withdrawn => {
-																// A takedown landed after `outlook`, and this
-																// upload may have put its archive back. No other
-																// line shares the tree (the tree's manifest names
-																// this version), so it goes again (R5a.2).
-																let _ <- Store.delete(key)
-																withdrawnVersion(name, version)
-															},
-															Unreadable(why) => problemAt500[Line](
-																why
-															),
 														}
 													},
 												}
@@ -686,7 +715,7 @@ service api from http {
 		package: String,
 		version: String,
 		headers: RequestHeaders
-	) -> Effect[HttpResult[Yanked]] by v: Visitor given Limits, Tokens {
+	) -> Effect[HttpResult[Yanked]] by v: Visitor given Limits, Tokens, Edge {
 		let allowed <- Limits.write(headers.clientIp(), headers.bearer())
 		if !allowed {
 			rateLimited[Yanked]()
@@ -707,7 +736,10 @@ service api from http {
 							"application/json"
 						),
 						IndexUnreadable(why) => problemAt500[Yanked](why),
-						Changed => Ok(Yanked { ok: true }),
+						Changed => {
+							let _ <- Edge.purge(indexPurge(org, package))
+							Ok(Yanked { ok: true })
+						},
 					}
 				},
 			}
@@ -719,7 +751,7 @@ service api from http {
 		package: String,
 		version: String,
 		headers: RequestHeaders
-	) -> Effect[HttpResult[Yanked]] by v: Visitor given Limits, Tokens {
+	) -> Effect[HttpResult[Yanked]] by v: Visitor given Limits, Tokens, Edge {
 		let allowed <- Limits.write(headers.clientIp(), headers.bearer())
 		if !allowed {
 			rateLimited[Yanked]()
@@ -740,7 +772,10 @@ service api from http {
 							"application/json"
 						),
 						IndexUnreadable(why) => problemAt500[Yanked](why),
-						Changed => Ok(Yanked { ok: true }),
+						Changed => {
+							let _ <- Edge.purge(indexPurge(org, package))
+							Ok(Yanked { ok: true })
+						},
 					}
 				},
 			}
@@ -780,6 +815,19 @@ service api from http {
 			),
 		}
 	}
+}
+
+---
+What to purge from the edge for a package's index file after a yank or an
+un-yank (R6.1), so the change is seen at once rather than within the index
+files' 60 seconds. Only these purge an index: a publish adds a line a stale
+read merely lacks, and purging on every publish would run into Cloudflare's
+purge rate limit. A refused purge changes nothing here: the yank stands, and
+the 60-second bound still holds. The prefix also purges a package whose name
+extends this one (`money_x`), which costs only a cache miss.
+---
+fn indexPurge(org: String, package: String) -> List[String] {
+	["/\(org)/\(package)"]
 }
 
 ---

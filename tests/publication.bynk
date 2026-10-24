@@ -1,0 +1,110 @@
+suite registry.store {
+	// The publication rule (R6.1, decision D): every registry dependency
+	// resolves here. The organisations and indexes are the real agents, with the
+	// bucket stubbed; scripts/check-publication.sh drives it through the API.
+
+	case "a dependency resolves on a claimed organisation with a live version in range" {
+		let line = (version: String) => Line {
+			name: "acme/money",
+			version: version,
+			checksum: "sha256-\(version)",
+			deps: [],
+			npm: [],
+			toolchain: None,
+			yanked: false,
+			withdrawn: None,
+			sig: "c2ln",
+		}
+		let _ <- Organisation("acme").claim(GitHubUser { id: 1, login: "ann" }, false)
+		let _ <- PackageIndex("acme/money").append(line("1.2.0"))
+		let ok <- Publication.check([Requirement { package: "acme/money", range: "^1.1" }])
+		expect ok == Resolvable
+		let none <- Publication.check([])
+		expect none == Resolvable
+	}
+
+	case "a yanked version in range still resolves" {
+		let _ <- Organisation("acme").claim(GitHubUser { id: 1, login: "ann" }, false)
+		let _ <- PackageIndex("acme/money").append(Line {
+			name: "acme/money",
+			version: "1.0.0",
+			checksum: "sha256-AAAA",
+			deps: [],
+			npm: [],
+			toolchain: None,
+			yanked: false,
+			withdrawn: None,
+			sig: "c2ln",
+		})
+		let _ <- PackageIndex("acme/money").setYanked("1.0.0", true)
+		let ok <- Publication.check([Requirement { package: "acme/money", range: "1" }])
+		expect ok == Resolvable
+	}
+
+	case "an unclaimed organisation, a blocked one and an unpublished package are refused" {
+		let unclaimed <- Publication.check([Requirement { package: "nobody/money", range: "1" }])
+		expect unclaimed is Unresolvable(why) && why.contains("no organisation `nobody`")
+		let _ <- Organisation("held").claim(GitHubUser { id: 2, login: "bob" }, true)
+		let blocked <- Publication.check([Requirement { package: "held/money", range: "1" }])
+		expect blocked is Unresolvable(why) && why.contains("blocked")
+		let _ <- Organisation("acme").claim(GitHubUser { id: 1, login: "ann" }, false)
+		let missing <- Publication.check([Requirement { package: "acme/nothing", range: "1" }])
+		expect missing is Unresolvable(why) && why.contains("isn't published")
+		let malformed <- Publication.check([Requirement { package: "Acme/x", range: "1" }])
+		expect malformed is Unresolvable(_)
+	}
+
+	case "nothing in range, or only a withdrawn version in it, is refused" {
+		let line = (version: String) => Line {
+			name: "acme/money",
+			version: version,
+			checksum: "sha256-\(version)",
+			deps: [],
+			npm: [],
+			toolchain: None,
+			yanked: false,
+			withdrawn: None,
+			sig: "c2ln",
+		}
+		let _ <- Organisation("acme").claim(GitHubUser { id: 1, login: "ann" }, false)
+		let _ <- PackageIndex("acme/money").append(line("1.0.0"))
+		let _ <- PackageIndex("acme/money").append(line("2.0.0"))
+		let _ <- PackageIndex("acme/money").withdraw("2.0.0", "malware")
+		let outside <- Publication.check([Requirement { package: "acme/money", range: "^3" }])
+		expect outside is Unresolvable(why) && why.contains("is in `^3`")
+		let gone <- Publication.check([Requirement { package: "acme/money", range: "^2" }])
+		expect gone is Unresolvable(why) && why.contains("withdrawn")
+		let live <- Publication.check([Requirement { package: "acme/money", range: ">=1" }])
+		expect live == Resolvable
+	}
+
+	case "the first dependency that doesn't resolve is the one named" {
+		let _ <- Organisation("acme").claim(GitHubUser { id: 1, login: "ann" }, false)
+		let _ <- PackageIndex("acme/money").append(Line {
+			name: "acme/money",
+			version: "1.0.0",
+			checksum: "sha256-AAAA",
+			deps: [],
+			npm: [],
+			toolchain: None,
+			yanked: false,
+			withdrawn: None,
+			sig: "c2ln",
+		})
+		let verdict <- Publication.check([
+			Requirement {
+				package: "acme/money",
+				range: "1",
+			},
+			Requirement {
+				package: "acme/first",
+				range: "1",
+			},
+			Requirement {
+				package: "acme/second",
+				range: "1",
+			},
+		])
+		expect verdict is Unresolvable(why) && why.contains("acme/first")
+	}
+}

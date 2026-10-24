@@ -140,6 +140,8 @@ python3 - "$work/withdraw.json" "$reason" <<'PY' || fail "the takedown's answer 
 import json, sys
 a = json.load(open(sys.argv[1]))
 assert a["archive"] == "deleted", a
+# `bynk dev` has no edge cache: the purge is a logged no-op that succeeds.
+assert a["edge"] == "purged", a
 assert a["version"] == "0.1.0" and a["reason"] == sys.argv[2], a
 PY
 [[ "$(withdraw "$withdrawer" 0.1.0 "$reason")" == 409 ]] || fail "a repeated takedown wasn't 409"
@@ -187,6 +189,7 @@ log = json.load(sys.stdin)["takedowns"]
 assert len(log) == 1, log
 t = log[0]
 assert t["package"] == sys.argv[1] and t["version"] == "0.1.0" and t["archive"] == "deleted", t
+assert t["edge"] == "purged", t
 assert t["tokenId"] == hashlib.sha256(sys.argv[2].encode()).hexdigest(), t
 ' "$org/greeting" "$withdrawer" || fail "the takedown log is wrong"
 

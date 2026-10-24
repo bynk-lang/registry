@@ -1,0 +1,105 @@
+suite registry.ranges
+
+// The range rules are pure, so they are tested directly. Each expectation is
+// what Cargo's `semver::VersionReq::matches` answers for the same pair.
+
+case "a bare version is a caret" {
+	expect admits("1.2.3", "1.2.3") == Ok(true)
+	expect admits("1.2.3", "1.9.0") == Ok(true)
+	expect admits("1.2.3", "2.0.0") == Ok(false)
+	expect admits("1.2.3", "1.2.2") == Ok(false)
+	expect admits("0.2.3", "0.2.9") == Ok(true)
+	expect admits("0.2.3", "0.3.0") == Ok(false)
+	expect admits("0.0.3", "0.0.3") == Ok(true)
+	expect admits("0.0.3", "0.0.4") == Ok(false)
+	expect admits("1", "1.9.9") == Ok(true)
+	expect admits("1", "2.0.0") == Ok(false)
+	expect admits("0.1", "0.1.7") == Ok(true)
+	expect admits("0.1", "0.2.0") == Ok(false)
+	expect admits("1.2", "1.3.0") == Ok(true)
+	expect admits("1.2", "1.1.9") == Ok(false)
+}
+
+case "carets and tildes" {
+	expect admits("^1.2.3", "1.4.0") == Ok(true)
+	expect admits("^1.2.3", "2.0.0") == Ok(false)
+	expect admits("^0", "0.9.0") == Ok(true)
+	expect admits("~0.1", "0.1.5") == Ok(true)
+	expect admits("~0.1", "0.2.0") == Ok(false)
+	expect admits("~1.2.3", "1.2.9") == Ok(true)
+	expect admits("~1.2.3", "1.3.0") == Ok(false)
+	expect admits("~1.2.3", "1.2.2") == Ok(false)
+	expect admits("~1", "1.9.0") == Ok(true)
+	expect admits("~1", "2.0.0") == Ok(false)
+}
+
+case "comparisons, partial versions and commas" {
+	expect admits("=1.2.3", "1.2.3") == Ok(true)
+	expect admits("=1.2.3", "1.2.4") == Ok(false)
+	expect admits("=1.2", "1.2.9") == Ok(true)
+	expect admits("=1.2", "1.3.0") == Ok(false)
+	expect admits(">=1.2, <1.5", "1.4.9") == Ok(true)
+	expect admits(">=1.2, <1.5", "1.5.0") == Ok(false)
+	expect admits(">= 1.2.3", "1.2.3") == Ok(true)
+	expect admits(">1.2", "1.3.0") == Ok(true)
+	expect admits(">1.2", "1.2.9") == Ok(false)
+	expect admits("<=1.2", "1.2.9") == Ok(true)
+	expect admits("<1.2", "1.2.0") == Ok(false)
+	expect admits(">1", "2.0.0") == Ok(true)
+	expect admits(">1", "1.9.0") == Ok(false)
+	expect admits(">0.1.2", "0.1.3") == Ok(true)
+	expect admits("<=0", "0.9.9") == Ok(true)
+	expect admits("<=0", "1.0.0") == Ok(false)
+	expect admits(" ^1.2 , <1.4 ", "1.3.0") == Ok(true)
+	expect admits("^0.0", "0.0.9") == Ok(true)
+	expect admits("^0.0", "0.1.0") == Ok(false)
+	expect admits("=0.0.1", "0.0.1") == Ok(true)
+}
+
+case "wildcards" {
+	expect admits("*", "3.1.4") == Ok(true)
+	expect admits("1.*", "1.7.0") == Ok(true)
+	expect admits("1.*", "2.0.0") == Ok(false)
+	expect admits("1.2.x", "1.2.8") == Ok(true)
+	expect admits("1.2.*", "1.3.0") == Ok(false)
+	expect admits(">=1.*", "1.0.0") == Ok(true)
+	expect admits("<1.*", "1.0.0") == Ok(false)
+	expect admits("<1.*", "0.9.0") == Ok(true)
+	expect admits("^1.*", "1.5.0") == Ok(true)
+	expect admits("1.*.3", "1.0.3") is Err(_)
+	expect admits("1.*-rc.1", "1.0.0") is Err(_)
+}
+
+case "a pre-release is admitted only when a comparator names its release" {
+	expect admits("*", "1.0.0-rc.1") == Ok(false)
+	expect admits("^1.0.0", "1.1.0-rc.1") == Ok(false)
+	expect admits("^1.1.0-rc.1", "1.1.0-rc.2") == Ok(true)
+	expect admits("^1.1.0-rc.1", "1.1.0") == Ok(true)
+	expect admits("^1.1.0-rc.2", "1.1.0-rc.1") == Ok(false)
+	expect admits(">=1.0.0-rc.1", "1.1.0-rc.1") == Ok(false)
+	expect admits("=1.0.0-alpha.1", "1.0.0-alpha.1") == Ok(true)
+	expect admits(">=1.0.0-alpha.2", "1.0.0-alpha.10") == Ok(true)
+	expect admits(">=1.0.0-beta", "1.0.0-alpha.9") == Ok(false)
+	expect admits(">=1.0.0-alpha", "1.0.0-alpha.1") == Ok(true)
+	expect admits(">1.0.0-1", "1.0.0-a") == Ok(true)
+	expect admits("~1.2.3-rc.1", "1.2.3") == Ok(true)
+	expect admits("~1.2.3-rc.1", "1.2.4") == Ok(true)
+	expect admits("<1.2.3-rc.2", "1.2.3-rc.1") == Ok(true)
+	expect admits("<1.2.3", "1.2.3-rc.1") == Ok(false)
+	expect admits("^0.0.3-a", "0.0.3-b") == Ok(true)
+	expect admits("^0.0.3-b", "0.0.3-a") == Ok(false)
+	expect admits(">=1.0.0-rc.1, <2", "1.0.0-rc.3") == Ok(true)
+}
+
+case "build metadata is ignored" {
+	expect admits("^1.2.3", "1.2.4+build.5") == Ok(true)
+}
+
+case "what isn't a range or a version is said" {
+	expect admits("^1.2.3.4", "1.2.3") is Err(_)
+	expect admits("^a.b", "1.2.3") is Err(_)
+	expect admits("", "1.2.3") is Err(_)
+	expect admits("1.2-rc", "1.2.0") is Err(_)
+	expect admits("^1", "1.2") is Err(_)
+	expect admits("^1", "01.2.3") is Err(_)
+}

@@ -187,8 +187,8 @@ additive = false
 [[agents."registry.store.Takedowns".shapes.fields]]
 name = "records"
 kind = "Cell"
-type = "List[{archive: String, at: Int, checksum: String, package: String, reason: String, tokenId: String, version: String}]"
-refinement = "List[{archive: String, at: Int, checksum: String, package: String, reason: String, tokenId: String, version: String}]"
+type = "List[{archive: String, at: Int, checksum: String, edge: String, package: String, reason: String, tokenId: String, version: String}]"
+refinement = "List[{archive: String, at: Int, checksum: String, edge: String, package: String, reason: String, tokenId: String, version: String}]"
 
 [agents."registry.store.TrustedRepository"]
 version = 1

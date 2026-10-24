@@ -1,7 +1,7 @@
 // Abuse limits (first-party registry R5.1, #2390): rate limits per token, per
 // IP and per repository, through Cloudflare's rate limiting (standard-library
-// P3). Reads aren't limited here: they're cached at the edge, and read abuse is
-// the operator's WAF matter.
+// P3). Reads aren't limited here: the edge serves most of them from its cache
+// (`files.bynk`, R6.1), and read abuse is the operator's WAF matter.
 context registry.store
 
 consumes bynk.cloudflare { RateLimit }

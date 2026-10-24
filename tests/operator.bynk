@@ -32,8 +32,10 @@ suite registry.store {
 		) by Visitor
 		expect r is Ok(a)
 			&& a.archive == "deleted"
+			&& a.edge == "purged"
 			&& a.package == "acme/money"
 			&& a.reason == "malware, reported 2026-10-24"
+		expect Edge.purge called once with prefixes == ["/dl/sha256/0000000000000000000000000000000000000000000000000000000000000000"]
 		let stored <- Store.head(key)
 		expect stored == None
 		let backed <- Backup.head(key)
@@ -57,6 +59,7 @@ suite registry.store {
 			&& l.takedowns.length() == 1
 			&& l.takedowns.first().map((t) => t.tokenId == "64"
 				&& t.archive == "deleted"
+				&& t.edge == "purged"
 				&& t.package == "acme/money") == Some(true)
 	}
 
@@ -103,6 +106,8 @@ suite registry.store {
 		expect used == 0
 		let records <- Takedowns(takedownLog()).list()
 		expect records.map((t) => t.archive) == ["deleted"]
+		// The first takedown purged the edge, so the repeat doesn't.
+		expect Edge.purge called once
 	}
 
 	case "a takedown interrupted after its index write is finished, refunded and logged by a repeat" {
@@ -183,6 +188,147 @@ suite registry.store {
 		expect records.length() == 1
 	}
 
+	case "a refused purge leaves the takedown unfinished, and each repeat purges again" {
+		stub Secrets.get("REGISTRY_TOKENS") returns Some("[{\"sha256\":\"64\",\"organisations\":[],\"can\":[\"withdraw\"]}]")
+		stub Crypto.digest(_, _) returns Bytes.fromUtf8("d")
+		stub Edge.purge(_) returns false
+		let key = "dl/sha256/0000000000000000000000000000000000000000000000000000000000000000"
+		let _ <- PackageIndex("acme/money").append(Line {
+			name: "acme/money",
+			version: "1.0.0",
+			checksum: "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+			deps: [],
+			npm: [],
+			toolchain: None,
+			yanked: false,
+			withdrawn: None,
+			sig: "c2ln",
+		})
+		let _ <- Store.put(key, Bytes.fromUtf8("tree"))
+		let first <- operator.POST(
+			"/_operator/withdraw/:org/:package/:version",
+			"acme",
+			"money",
+			"1.0.0",
+			WithdrawRequest { reason: "a takedown" },
+			RequestHeaders.of(["Authorization: Bearer op"])
+		) by Visitor
+		expect first is Ok(a) && a.archive == "deleted" && a.edge == "purge_failed"
+		let stored <- Store.head(key)
+		expect stored == None
+		let again <- operator.POST(
+			"/_operator/withdraw/:org/:package/:version",
+			"acme",
+			"money",
+			"1.0.0",
+			WithdrawRequest { reason: "a takedown" },
+			RequestHeaders.of(["Authorization: Bearer op"])
+		) by Visitor
+		expect again is Ok(a) && a.archive == "finished" && a.edge == "purge_failed"
+		expect Edge.purge called 2 times
+		let records <- Takedowns(takedownLog()).list()
+		expect records.map((t) => t.edge) == ["purge_failed", "purge_failed"]
+	}
+
+	case "a repeat of a takedown whose purge was refused purges, then is 409" {
+		stub Secrets.get("REGISTRY_TOKENS") returns Some("[{\"sha256\":\"64\",\"organisations\":[],\"can\":[\"withdraw\"]}]")
+		stub Crypto.digest(_, _) returns Bytes.fromUtf8("d")
+		let _ <- PackageIndex("acme/money").append(Line {
+			name: "acme/money",
+			version: "1.0.0",
+			checksum: "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+			deps: [],
+			npm: [],
+			toolchain: None,
+			yanked: false,
+			withdrawn: None,
+			sig: "c2ln",
+		})
+		// A takedown that deleted and logged everything, but whose purge
+		// Cloudflare refused.
+		let _ <- PackageIndex("acme/money").withdraw("1.0.0", "a takedown")
+		let _ <- Takedowns(takedownLog()).log(TakedownRecord {
+			at: 1,
+			tokenId: "64",
+			package: "acme/money",
+			version: "1.0.0",
+			checksum: "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+			reason: "a takedown",
+			archive: "deleted",
+			edge: "purge_failed",
+		})
+		let retried <- operator.POST(
+			"/_operator/withdraw/:org/:package/:version",
+			"acme",
+			"money",
+			"1.0.0",
+			WithdrawRequest { reason: "a takedown" },
+			RequestHeaders.of(["Authorization: Bearer op"])
+		) by Visitor
+		expect retried is Ok(a) && a.archive == "finished" && a.edge == "purged"
+		expect Edge.purge called once with prefixes == ["/dl/sha256/0000000000000000000000000000000000000000000000000000000000000000"]
+		let done <- operator.POST(
+			"/_operator/withdraw/:org/:package/:version",
+			"acme",
+			"money",
+			"1.0.0",
+			WithdrawRequest { reason: "a takedown" },
+			RequestHeaders.of(["Authorization: Bearer op"])
+		) by Visitor
+		expect done is RawError(409, _, _)
+		expect Edge.purge called once
+		let records <- Takedowns(takedownLog()).list()
+		expect records.map((t) => t.edge) == ["purge_failed", "purged"]
+	}
+
+	case "a version taken down while its tree was shared is done once a later takedown purges the tree" {
+		stub Secrets.get("REGISTRY_TOKENS") returns Some("[{\"sha256\":\"64\",\"organisations\":[],\"can\":[\"withdraw\"]}]")
+		stub Crypto.digest(_, _) returns Bytes.fromUtf8("d")
+		let key = "dl/sha256/0000000000000000000000000000000000000000000000000000000000000000"
+		let sample = (version: String) => Line {
+			name: "acme/money",
+			version: version,
+			checksum: "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+			deps: [],
+			npm: [],
+			toolchain: None,
+			yanked: false,
+			withdrawn: None,
+			sig: "c2ln",
+		}
+		let _ <- PackageIndex("acme/money").append(sample("1.0.0"))
+		let _ <- PackageIndex("acme/money").append(sample("1.0.1"))
+		let _ <- Store.put(key, Bytes.fromUtf8("tree"))
+		let kept <- operator.POST(
+			"/_operator/withdraw/:org/:package/:version",
+			"acme",
+			"money",
+			"1.0.0",
+			WithdrawRequest { reason: "a takedown" },
+			RequestHeaders.of(["Authorization: Bearer op"])
+		) by Visitor
+		expect kept is Ok(a) && a.edge == "kept"
+		let purged <- operator.POST(
+			"/_operator/withdraw/:org/:package/:version",
+			"acme",
+			"money",
+			"1.0.1",
+			WithdrawRequest { reason: "a takedown" },
+			RequestHeaders.of(["Authorization: Bearer op"])
+		) by Visitor
+		expect purged is Ok(a) && a.archive == "deleted" && a.edge == "purged"
+		let again <- operator.POST(
+			"/_operator/withdraw/:org/:package/:version",
+			"acme",
+			"money",
+			"1.0.0",
+			WithdrawRequest { reason: "a takedown" },
+			RequestHeaders.of(["Authorization: Bearer op"])
+		) by Visitor
+		expect again is RawError(409, _, _)
+		expect Edge.purge called once
+	}
+
 	case "an archive another live version names is kept" {
 		stub Secrets.get("REGISTRY_TOKENS") returns Some("[{\"sha256\":\"64\",\"organisations\":[],\"can\":[\"withdraw\"]}]")
 		stub Crypto.digest(_, _) returns Bytes.fromUtf8("d")
@@ -209,9 +355,10 @@ suite registry.store {
 			WithdrawRequest { reason: "a takedown" },
 			RequestHeaders.of(["Authorization: Bearer op"])
 		) by Visitor
-		expect r is Ok(a) && a.archive == "shared"
+		expect r is Ok(a) && a.archive == "shared" && a.edge == "kept"
 		let stored <- Store.head(key)
 		expect stored.isSome()
+		expect Edge.purge called 0 times
 	}
 
 	case "a missing package or version is 404" {
@@ -342,6 +489,7 @@ suite registry.store {
 			checksum: "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
 			reason: "a takedown",
 			archive: "deleted",
+			edge: "purged",
 		})
 		let _ <- Exporter.tick(0)
 		let _ <- Exporter.tick(1)

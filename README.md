@@ -50,8 +50,10 @@ service is seen there before it is released.
 
 | Path | What |
 |---|---|
-| `src/registry/store/files.bynk` | `context registry.store`: owns the registry's bucket (`capability Store = R2`) and serves the protocol's read paths |
+| `src/registry/store/files.bynk` | `context registry.store`: owns the registry's bucket (`capability Store = R2`) and its edge cache (`capability Edge = EdgeCache`), and serves the protocol's read paths |
 | `src/registry/store/publish.bynk` | The publish API: the `api` service, the per-package `PackageIndex` agent, the token check and delegate signing |
+| `src/registry/store/publication.bynk` | The publication rule: every registry dependency of an upload resolves here |
+| `src/registry/ranges.bynk` | `commons registry.ranges`: whether a dependency's range admits a version, as Cargo reads ranges |
 | `src/registry/store/trusted.bynk` | Trusted publishing: the `Workload` actor (GitHub Actions OIDC), trusted publishers, and the exchange |
 | `src/registry/store/accounts.bynk` | Accounts: the `account` service, GitHub's device flow, and the `Organisation`, `PublishToken` and `Session` agents |
 | `src/registry/store/operator.bynk` | The operator routes: the takedown, its `Takedowns` log, and restoring an organisation |
@@ -63,8 +65,9 @@ service is seen there before it is released.
 | `src/registry/paths.bynk` | `commons registry.paths`: the object keys, and the name rules that guard them |
 | `tests/` | Unit tests: the key rules, and the read paths against a stubbed bucket |
 | `seed/seed.sh` | Upload a `bynk registry` directory into the bucket |
-| `scripts/check-read-path.sh` | The read path end to end, as CI runs it |
+| `scripts/check-read-path.sh` | The read path end to end, and its caching headers, as CI runs it |
 | `scripts/check-publish.sh` | The publish API end to end, as CI runs it |
+| `scripts/check-publication.sh` | The publication rule end to end, as CI runs it |
 | `scripts/check-accounts.sh` | Accounts end to end, against `scripts/fake-github.py`, as CI runs it |
 | `scripts/check-trusted.sh` | Trusted publishing end to end, against `scripts/fake-oidc.mjs`, as CI runs it |
 | `scripts/check-limits.sh` | The rate limits and the quota end to end, as CI runs it |
@@ -93,8 +96,37 @@ and an export is the reverse.
 A missing object, or a name outside the manifest's rules (a malformed
 organisation, package or digest), is `404`; a malformed name never reaches the
 bucket. Nothing here signs or decides anything: clients verify every line's
-signature and every archive's checksum. The read paths aren't cached yet —
-that is the language slice L3 ([bynk-lang/bynk#2335](https://github.com/bynk-lang/bynk/issues/2335)).
+signature and every archive's checksum.
+
+**Cached at Cloudflare's edge** (R6.1, [bynk-lang/bynk#2413](https://github.com/bynk-lang/bynk/issues/2413)).
+The context declares `capability Edge = EdgeCache`, which turns Workers Cache
+on for its Worker (L7, ADR 0613). The edge answers a cached read without running
+the Worker:
+
+| Request | `Cache-Control` | Validator |
+|---|---|---|
+| `GET /config.json`, `GET /<org>/<package>` | `public, max-age=60` | a weak `ETag`; a matching `If-None-Match` is `304` |
+| `GET /dl/sha256/<hex>` | `public, max-age=31536000, immutable` | the strong `ETag` `"<hex>"`, whatever the archive's size |
+| anything else (every `404`, a fault, `/_status/export`, the account API) | `no-store` | — |
+
+- **60 seconds is the bound on a stale read.** `config.json` and the index
+  files change in place: a delegation or a revocation, a yank, a withdrawal.
+  Anyone reading through the edge sees such a change within a minute.
+- **A yank or an un-yank purges its index file** (`/<org>/<package>`), so it
+  is seen at once. A publish doesn't: a stale read only lacks the new line for
+  up to a minute, and purging on every publish would run into the purge rate
+  limit. If Cloudflare refuses a yank's purge, the yank still stands and the
+  60-second bound still holds. A staging conformance run depends on this purge:
+  it reads an index, yanks, and reads it again within seconds.
+- **An archive never changes,** so it is kept for good. Only a takedown purges
+  it (see "Takedowns").
+- **Everyone gets the same answer.** The edge keys a response by its URL alone,
+  and a `public` response is shared even when the request carried a token
+  (ADR 0613 G). So these routes are `by Visitor`, and answer the same bytes to
+  everyone.
+- **`bynk dev` has no edge cache.** It sends the same headers, and a purge
+  there is a logged no-op that succeeds. Staging is where the cache is checked
+  (see "Deploying").
 
 ## Publishing
 
@@ -112,9 +144,27 @@ Every refusal is JSON `{"error", "message"}` with the reference server's status:
 `400 invalid_package` for an archive the rules refuse (or one naming another
 package or version), `401 unauthorised`, `403 forbidden`, `404 not_found`,
 `409 version_exists` for another tree under a published version, `410 withdrawn`
-for a version taken down (and `409 withdrawn` to un-yank one), and
-`413 too_large` past the 64 MiB cap (the router's own refusals are rendered by
-`on rejected`).
+for a version taken down (and `409 withdrawn` to un-yank one),
+`413 too_large` past the 64 MiB cap, and `400 unpublishable_dependency` for a
+dependency that doesn't resolve here (below). The router's own refusals are
+rendered by `on rejected`.
+
+**The publication rule** (packaging §6.2; bynk-lang/bynk#2413, decision D): a
+package published here may depend only on what resolves here. Before an upload
+is stored, each of its registry dependencies is checked:
+
+- its organisation is claimed here and isn't blocked (a blocked name is held
+  for a private registry, so nothing in it resolves here);
+- its package has a version that isn't withdrawn and that the range admits.
+  Ranges are read as Cargo reads them, as the manifest does
+  (`src/registry/ranges.bynk`). A yanked version counts: yanking keeps a version
+  resolvable for existing locks.
+
+The first dependency that fails is refused as `400 unpublishable_dependency`,
+naming it and why. Publish the dependency here first. A retry of a tree already
+published passes whatever its dependencies' state now: it was admitted once
+(D10). The rule is this service's, not the protocol's: a private registry may
+accept dependencies on this one, so the shared rules stay neutral.
 
 **The rules are the shared crate's.** Admission, the bytes a line's signature
 covers, and what `config.json` says about a key all come from
@@ -172,7 +222,8 @@ python3 -c 'import hashlib,json,sys; print(json.dumps({"sha256": hashlib.sha256(
 ```
 
 Keep them apart: the token that settles disputes needn't delete archives, and
-neither belongs in CI.
+neither belongs in CI. The one exception is a separate `withdraw` token that only
+staging holds, for the deploy's purge check (see "Deploying").
 
 ## Accounts
 
@@ -306,8 +357,9 @@ Cloudflare location and approximately:
 | 60 a minute | IP | the account API: sign-in, polling, organisations, tokens |
 | 10 a minute | repository (the token's `repository_id`) | the trusted-publishing exchange |
 
-Past one, a request is `429 rate_limited`. Reads aren't limited by the service:
-they're cached at the edge, and read abuse is a matter for Cloudflare's WAF.
+Past one, a request is `429 rate_limited`. Reads aren't limited by the service.
+The edge serves most of them from its cache (see "Reading"), and read abuse is a
+matter for Cloudflare's WAF.
 The limits are in the source, so changing one is a release; `bynk deploy`
 allocates each limiter's namespace id into `bynk.deploy.lock`.
 
@@ -327,7 +379,7 @@ final. An operator token that can `withdraw` does it:
 ```bash
 curl -X POST https://<registry>/_operator/withdraw/acme/money/1.4.2 -H "authorization: Bearer $WITHDRAW" \
   -H 'content-type: application/json' -d '{"reason":"Removed after a confirmed malware report"}'
-#   200 — {"package", "version", "reason", "archive": "deleted"}
+#   200 — {"package", "version", "reason", "archive": "deleted", "edge": "purged"}
 ```
 
 It:
@@ -335,37 +387,54 @@ It:
 - marks the line `yanked`, with the reason as its unsigned `withdrawn`. Nothing
   is re-signed;
 - deletes the archive from the store and the backup;
+- purges `/dl/sha256/<hex>` from the edge. A content address has a fixed
+  length, so the purge names no other archive;
 - gives the organisation its bytes back on the quota;
-- logs who (the token's sha256), when, what, why and what became of the archive.
+- logs who (the token's sha256), when, what, why, and what became of the
+  archive and of the edge's copy.
 
 Every client then fails on the version as `bynk.registry.withdrawn`, quoting
 the reason and pointing at `bynk update`. The version can't come back: a `PUT`
 of it, even the same tree, is `410 withdrawn`, and an un-yank `409 withdrawn`.
 **What it can't do:** reach a tree already in a user's store (`$BYNK_HOME`),
 which keeps building, or a copy of the backup outside the account. Apply the
-takedown to such a copy by hand.
+takedown to such a copy by hand. Nor can it reach a downstream cache that kept
+the archive under `immutable`: a corporate proxy, a mirror or a browser. A
+client reads `withdrawn` from the index before it fetches, so such a copy only
+matters to someone who fetches by digest and ignores the index.
 
 The reason is what every client prints: one line, at most 500 characters,
 written for the people whose builds stop (`400 invalid_reason` otherwise). Check
 the `org/package/version` before sending: there is no undo, and a wrong
 takedown is recovered as the protocol says, with a new version.
 
+**`"edge"`** is `purged`, `kept` (another live version shares the archive, so
+it is still served), or `purge_failed`. Cloudflare refuses purges past its rate
+limit (about 25 in a burst, recovered within a minute). A `purge_failed`
+takedown has done everything else, but the edge may serve the archive until it
+is purged, so it counts as interrupted.
+
 A repeat is `409 withdrawn`, unless it finishes an interrupted takedown, which
 answers `200` with `"archive": "finished"`. Finishing deletes what's left,
-refunds the quota if the first attempt didn't, and logs the takedown if it
-wasn't logged. Run it again whenever a takedown didn't answer `200`.
+refunds the quota if the first attempt didn't, logs the takedown if it wasn't
+logged, and purges the edge unless a takedown is logged as having purged that
+archive. **Run it again whenever a takedown didn't answer `200`, or
+answered `"edge": "purge_failed"`,** until it answers `409` or
+`"edge": "purged"`.
 
 ```bash
 curl https://<registry>/_operator/takedowns -H "authorization: Bearer $WITHDRAW"
-#   {"takedowns": [{"at", "tokenId", "package", "version", "checksum", "reason", "archive"}, …]}, newest first
+#   {"takedowns": [{"at", "tokenId", "package", "version", "checksum", "reason", "archive", "edge"}, …]}, newest first
 ```
 
 The log is for operators only; the public sees the reason on the index line.
 The export copies it to `agents/takedowns.json`.
 
-**Before edge caching (R6).** Archives aren't cached at the edge yet. When
-they are, a takedown must purge the archive there too, or archives can't be
-cached as immutable.
+**The purge comes only from the Worker's `fetch`.** It is made by the
+operator route's own request, never from the export's cron, an agent or a queue
+consumer, and the compiler refuses one from any of those (ADR 0613 D). A cron
+run's purge reports success and clears nothing from the cache that requests
+are served from.
 
 ## Export and restore
 
@@ -445,6 +514,11 @@ gh release create v0.1.0 --target main --title v0.1.0 --notes "…"
    is built from source. Then it runs:
    - `bynk deploy --env staging`;
    - a full `bynk registry conformance` run;
+   - **the edge cache, with anonymous reads:** a repeated fetch of the archive
+     conformance just published must be `cf-cache-status: HIT`. Then a takedown
+     of that version must answer `"edge": "purged"`, and the next fetch must be
+     the origin's `404`. Conformance can't show this, because `bynk dev` has no
+     cache and conformance reads with its token;
    - a trusted-publishing exchange with the workflow's own OIDC token.
 3. **Production** (environment `registry-production`, with required reviewers:
    the approval) does the same with `--env production`, then runs the
@@ -474,6 +548,7 @@ gh release create v0.1.0 --target main --title v0.1.0 --notes "…"
 | secret | `REGISTRY_TOKENS`, `REGISTRY_QUOTAS` | Operator tokens and raised quotas (optional) |
 | secret | `REGISTRY_GITHUB_CLIENT_ID`, `REGISTRY_GITHUB_API_TOKEN` | The environment's GitHub OAuth app, and an optional API token; deployed as `GITHUB_CLIENT_ID` and `GITHUB_API_TOKEN` |
 | secret | `REGISTRY_CONFORMANCE_TOKEN`, `REGISTRY_NARROW_TOKEN` | Staging only: publish tokens for the conformance organisation, and a narrow one for another |
+| secret | `REGISTRY_WITHDRAW_TOKEN` | Staging only: an operator token that can `withdraw` and nothing else, listed in staging's `REGISTRY_TOKENS`, for the purge check. Never production's |
 | variable | `REGISTRY_URL` | The environment's registry origin |
 | variable | `REGISTRY_ROOT_KEY` | The registry's root public key, `ed25519:…` |
 | variable | `REGISTRY_CONFORMANCE_ORG` | Staging only: the organisation conformance publishes throwaway packages to, with this repository's `deploy-registry.yml` (environment `registry-staging`) registered as its trusted publisher |
@@ -510,6 +585,7 @@ its relative path. It carries no keys: the directory arrives signed.
 ```bash
 BYNK=$(command -v bynk) scripts/check-read-path.sh
 BYNK=$(command -v bynk) scripts/check-publish.sh
+BYNK=$(command -v bynk) scripts/check-publication.sh
 BYNK=$(command -v bynk) scripts/check-accounts.sh
 BYNK=$(command -v bynk) scripts/check-trusted.sh
 BYNK=$(command -v bynk) scripts/check-limits.sh
@@ -519,7 +595,8 @@ BYNK=$(command -v bynk) scripts/check-withdraw.sh
 
 builds a fixture registry (`conformance-fixture/hello`, two versions, one
 yanked), seeds `bynk dev`'s local bucket, serves the service, and runs
-`bynk registry conformance --read-only` against it. To explore by hand, run
+`bynk registry conformance --read-only` against it, then checks the caching
+headers each read path sends. To explore by hand, run
 `bynk dev . -- --persist-to <dir>` and seed with
 `seed/seed.sh <reg> --bucket registry-store-store --local --persist-to <dir>`.
 
@@ -529,6 +606,11 @@ publishes, yanks and resolves a package with the real client; then restarts the
 service with a key that isn't a delegate and checks it refuses to sign.
 `BYNK_HOLD=1` leaves the service up after it starts, for exploring by hand.
 
+`check-publication.sh` publishes a dependency's versions, yanks one and
+withdraws another. It then uploads packages whose dependencies don't resolve
+and checks each refusal, and checks that a yanked version in range and a
+same-tree retry are accepted.
+
 `check-accounts.sh` serves the same empty registry with `scripts/fake-github.py`
 standing in for GitHub. It signs two people in through the device flow, claims
 organisations, adds a member, mints publish tokens, runs the full conformance
@@ -536,10 +618,12 @@ with an account-minted token, and checks that revoked tokens, blocked names,
 reserved names and signed-out sessions are refused.
 
 `check-withdraw.sh` publishes two versions and exports them, takes one down
-with a `withdraw` token, and checks the read checks (`read.withdrawn`), a fresh
+with a `withdraw` token (its purge is `bynk dev`'s no-op, so the refused purge
+and its retry are unit tests), and checks the read checks (`read.withdrawn`), a fresh
 client failing as `bynk.registry.withdrawn`, a stored tree still building, the
 `410` and `409`, the backup without the archive, and the log; then exports an
 organisation and restores it, from those exported bytes, into a fresh registry.
 
-R2 and `bynk.crypto` are experimental in the standard library, so `bynk.toml`
-opts in under `[unstable] allow`; this service is the workload they graduate on.
+R2, `bynk.crypto`, rate limiting and the edge cache are experimental in the
+standard library, so `bynk.toml` opts in under `[unstable] allow`; this service
+is the workload they graduate on.

@@ -16,13 +16,15 @@ suite registry.store {
 		expect r is Raw(_, ct) && ct == "application/x-ndjson"
 	}
 
-	case "an archive is served as a bynk tree" {
+	case "an archive is served as a bynk tree, tagged with its digest" {
 		stub Store.get("dl/sha256/9f2c0a1b9f2c0a1b9f2c0a1b9f2c0a1b9f2c0a1b9f2c0a1b9f2c0a1b9f2c0a1b") returns Some(Bytes.fromUtf8("bynk-tree-v1\n"))
 		let r <- files.GET(
 			"/dl/sha256/:hex",
 			"9f2c0a1b9f2c0a1b9f2c0a1b9f2c0a1b9f2c0a1b9f2c0a1b9f2c0a1b9f2c0a1b"
 		) by Visitor
-		expect r is Raw(_, ct) && ct == "application/vnd.bynk.tree-v1"
+		expect r is RawTagged(_, ct, etag)
+			&& ct == "application/vnd.bynk.tree-v1"
+			&& etag == "\"9f2c0a1b9f2c0a1b9f2c0a1b9f2c0a1b9f2c0a1b9f2c0a1b9f2c0a1b9f2c0a1b\""
 	}
 
 	case "a missing object is not found" {

@@ -11,9 +11,11 @@ consumes bynk.crypto { Crypto }
 ---
 One takedown, as the log keeps it: when (epoch milliseconds), the acting
 operator token's sha256 (its id in `REGISTRY_TOKENS`), the version, its tree,
-the reason, and what became of the archive: `deleted`, `missing` (already
-gone), `shared` (kept for another live version), or `finished` (a repeat that
-deleted an archive an interrupted takedown left behind).
+the reason, what became of the archive: `deleted`, `missing` (already gone),
+`shared` (kept for another live version), or `finished` (a repeat that
+finished what an interrupted takedown left), and what became of the edge's
+copy (R6.1): `purged`, `purge_failed` (Cloudflare refused the purge, as it
+does past its rate limit), or `kept` (a shared archive, still served).
 ---
 type TakedownRecord = {
 	at: Int,
@@ -23,6 +25,7 @@ type TakedownRecord = {
 	checksum: String,
 	reason: String,
 	archive: String,
+	edge: String,
 }
 
 ---
@@ -50,6 +53,16 @@ agent Takedowns {
 		let rs = records
 		rs.any((r) => r.package == package && r.version == version)
 	}
+
+	---
+	Whether a takedown is logged as having purged the edge's copy of the
+	archive `checksum` names. Keyed by the tree, not the version: versions that
+	share a tree share its one copy at the edge.
+	---
+	on call purged(checksum: String) -> Effect[Bool] {
+		let rs = records
+		rs.any((r) => r.checksum == checksum && r.edge == "purged")
+	}
 }
 
 ---
@@ -67,14 +80,15 @@ type WithdrawRequest = {
 }
 
 ---
-A withdrawal's answer: the version, the reason its line now carries, and what
-became of the archive.
+A withdrawal's answer: the version, the reason its line now carries, what
+became of the archive, and what became of the edge's copy of it.
 ---
 type WithdrawAnswer = {
 	package: String,
 	version: String,
 	reason: String,
 	archive: String,
+	edge: String,
 }
 
 ---
@@ -88,7 +102,7 @@ type TakedownList = {
 What a takedown did.
 ---
 type TakedownOutcome =
-	| TookDown(line: Line, archive: String)
+	| TookDown(line: Line, archive: String, edge: String)
 	| AlreadyDown(line: Line)
 	| NoSuchVersionHere
 	| TakedownFailed(why: String)
@@ -136,9 +150,10 @@ provides Operators = SecretOperators given Secrets, Crypto {
 ---
 The takedown itself (track D8): withdraw the line, then delete its archive
 from the store and the backup unless another live version shares the tree,
-give the organisation back the bytes, and log it. Final: a version already
-withdrawn is only finished, its archive deleted if an interrupted takedown
-left it behind.
+purge the edge's copy, give the organisation back the bytes, and log it.
+Final: a version already withdrawn is only finished: its archive deleted if
+an interrupted takedown left it behind, and the edge purged if no takedown of
+it is logged as having purged it.
 ---
 capability Takedown {
 	fn withdraw(
@@ -150,7 +165,7 @@ capability Takedown {
 	) -> Effect[TakedownOutcome]
 }
 
-provides Takedown = BucketTakedown given Store, Backup, Clock, IndexFiles {
+provides Takedown = BucketTakedown given Store, Backup, Clock, IndexFiles, Edge {
 	fn withdraw(
 		tokenId: String,
 		org: String,
@@ -161,15 +176,27 @@ provides Takedown = BucketTakedown given Store, Backup, Clock, IndexFiles {
 		let name = "\(org)/\(package)"
 		let done <- PackageIndex(name).withdraw(version, reason)
 		let now <- Clock.now()
-		let logged = (line: Line, archive: String) => Takedowns(takedownLog()).log(TakedownRecord {
-			at: now.toEpochMillis(),
-			tokenId: tokenId,
-			package: name,
-			version: version,
-			checksum: line.checksum,
-			reason: line.withdrawn.getOrElse(reason),
-			archive: archive,
-		})
+		let logged = (line: Line, archive: String, edge: String) => Takedowns(takedownLog()).log(
+			TakedownRecord {
+				at: now.toEpochMillis(),
+				tokenId: tokenId,
+				package: name,
+				version: version,
+				checksum: line.checksum,
+				reason: line.withdrawn.getOrElse(reason),
+				archive: archive,
+				edge: edge,
+			}
+		)
+		// The edge's copy, purged after both deletes so a request between them
+		// can't refill it. Exactly the archive's path: a content address has a
+		// fixed length, so the prefix names no other archive. A refused purge
+		// (Cloudflare's rate limit) leaves the takedown unfinished, so repeating
+		// it purges again.
+		let purge = (key: String) => {
+			let accepted <- Edge.purge(["/\(key)"])
+			Effect.pure(if accepted { "purged" } else { "purge_failed" })
+		}
 		match done {
 			NotHere => Effect.pure(NoSuchVersionHere),
 			WithdrawUnreadable(why) => Effect.pure(TakedownFailed(why)),
@@ -178,12 +205,13 @@ provides Takedown = BucketTakedown given Store, Backup, Clock, IndexFiles {
 					"`\(name)` \(version) was withdrawn, but its checksum names no archive: \(line.checksum)"
 				)),
 				Some(key) => if shared {
-					let _ <- logged(line, "shared")
-					Effect.pure(TookDown(line, "shared"))
+					let _ <- logged(line, "shared", "kept")
+					Effect.pure(TookDown(line, "shared", "kept"))
 				} else {
 					let held <- Store.head(key)
 					let _ <- Store.delete(key)
 					let _ <- Backup.delete(key)
+					let edge <- purge(key)
 					let archive <- match held {
 						Some(o) => {
 							let _ <- OrgUsage(org).release(o.size)
@@ -191,8 +219,8 @@ provides Takedown = BucketTakedown given Store, Backup, Clock, IndexFiles {
 						},
 						None => Effect.pure("missing"),
 					}
-					let _ <- logged(line, archive)
-					Effect.pure(TookDown(line, archive))
+					let _ <- logged(line, archive, edge)
+					Effect.pure(TookDown(line, archive, edge))
 				},
 			},
 			AlreadyWithdrawn(line, shared) => match archiveName(line.checksum) {
@@ -202,20 +230,23 @@ provides Takedown = BucketTakedown given Store, Backup, Clock, IndexFiles {
 				} else {
 					// A takedown interrupted after its index write: finish it. The
 					// bytes are given back after the store's delete, so an archive
-					// still in the store was never refunded; and one never logged
-					// is logged now (the export's sweep reads the log).
+					// still in the store was never refunded; one never logged is
+					// logged now (the export's sweep reads the log); and the edge
+					// is purged unless a purge of this tree is logged.
 					let held <- Store.head(key)
 					let backed <- Backup.head(key)
 					let known <- Takedowns(takedownLog()).holds(name, version)
+					let purgedBefore <- Takedowns(takedownLog()).purged(line.checksum)
 					let _ <- Store.delete(key)
 					let _ <- Backup.delete(key)
 					let _ <- match held {
 						Some(o) => OrgUsage(org).release(o.size),
 						None => Effect.pure(()),
 					}
-					if held.isSome() || backed.isSome() || !known {
-						let _ <- logged(line, "finished")
-						Effect.pure(TookDown(line, "finished"))
+					if held.isSome() || backed.isSome() || !known || !purgedBefore {
+						let edge <- purge(key)
+						let _ <- logged(line, "finished", edge)
+						Effect.pure(TookDown(line, "finished", edge))
 					} else {
 						Effect.pure(AlreadyDown(line))
 					}
@@ -286,7 +317,10 @@ The operator routes. Every refusal is the protocol's JSON `{"error",
 ---
 service operator from http {
 	---
-	Withdraw a version (the takedown): needs `withdraw`. Final.
+	Withdraw a version (the takedown): needs `withdraw`. Final. It answers
+	`200` with `"edge": "purge_failed"` when Cloudflare refused the purge: the
+	version is down, but the edge may still serve its archive until a repeat
+	purges it.
 	---
 	on POST("/_operator/withdraw/:org/:package/:version") (
 		org: String,
@@ -319,11 +353,12 @@ service operator from http {
 						} else {
 							let done <- Takedown.withdraw(tokenId, org, package, version, reason)
 							match done {
-								TookDown(line, archive) => Ok(WithdrawAnswer {
+								TookDown(line, archive, edge) => Ok(WithdrawAnswer {
 									package: line.name,
 									version: line.version,
 									reason: line.withdrawn.getOrElse(reason),
 									archive: archive,
+									edge: edge,
 								}),
 								AlreadyDown(_) => RawError(
 									Conflict,
