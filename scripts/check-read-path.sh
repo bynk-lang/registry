@@ -48,3 +48,33 @@ url="$(grep -o 'http://[^"]*' "$work/ready.json" | head -1)"
 
 # 4. Hold it to the protocol.
 "$bynk" registry conformance "$url" --read-only --package conformance-fixture/hello
+
+# 5. The caching headers. `config.json` and the index files for 60 seconds,
+# revalidated against their tag; an archive for good, tagged with its digest;
+# everything else never.
+fail() { echo "check-read-path: $*" >&2; exit 1; }
+header() { # header <name> <curl args…>: the response header's value, lowercased name
+  local name="$1"; shift
+  curl -s -o /dev/null -D - "$@" | tr -d '\r' | awk -v n="$name" 'tolower($0) ~ "^"n":" { sub(/^[^:]*: */, ""); print; exit }'
+}
+status() { curl -s -o /dev/null -w '%{http_code}' "$@"; }
+for path in config.json conformance-fixture/hello; do
+  cc="$(header cache-control "$url/$path")"
+  [[ "$cc" == "public, max-age=60" ]] || fail "/$path is sent \`cache-control: $cc\`, not \`public, max-age=60\`"
+  tag="$(header etag "$url/$path")"
+  [[ -n "$tag" ]] || fail "/$path has no etag"
+  [[ "$(status "$url/$path" -H "if-none-match: $tag")" == 304 ]] || fail "/$path doesn't answer 304 to its own etag"
+done
+hex="$(curl -s "$url/conformance-fixture/hello" | python3 -c '
+import base64, json, sys
+print(base64.b64decode(json.loads(sys.stdin.readline())["checksum"][7:]).hex())')"
+cc="$(header cache-control "$url/dl/sha256/$hex")"
+[[ "$cc" == *immutable* && "$cc" == *public* ]] || fail "the archive is sent \`cache-control: $cc\`, not an immutable public one"
+[[ "$(header etag "$url/dl/sha256/$hex")" == "\"$hex\"" ]] || fail "the archive's etag isn't its digest"
+[[ "$(status "$url/dl/sha256/$hex" -H "if-none-match: \"$hex\"")" == 304 ]] || fail "the archive doesn't answer 304 to its digest"
+missing="$url/dl/sha256/$(printf '0%.0s' $(seq 1 64))"
+[[ "$(status "$missing")" == 404 ]] || fail "a missing archive isn't 404"
+[[ "$(header cache-control "$missing")" == no-store ]] || fail "a missing archive's 404 can be stored"
+[[ "$(header cache-control "$url/nobody/nothing")" == no-store ]] || fail "a missing index file's 404 can be stored"
+[[ "$(header cache-control "$url/_status/export")" == no-store ]] || fail "/_status/export can be stored"
+echo "check-read-path: config.json and the index files are cached for 60s, archives for good, and nothing else"

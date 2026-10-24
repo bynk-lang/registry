@@ -2,7 +2,7 @@ context registry.store
 
 uses registry.paths
 consumes bynk.cloudflare
-consumes bynk.cloudflare { R2 }
+consumes bynk.cloudflare { R2, EdgeCache }
 
 ---
 The registry's bucket, owned by this context alone (standard-library D3): the
@@ -12,12 +12,30 @@ are the only code that touches it. Its keys mirror a static registry directory.
 capability Store = R2
 
 ---
+Cloudflare's edge cache for this context's Worker (L7, ADR 0613): declaring it
+turns Workers Cache on, so a `@cache` route's `2xx` is kept at the edge and
+every other `GET` answer is `no-store`. A takedown purges an archive's path
+(`operator.bynk`); nothing else purges.
+---
+capability Edge = EdgeCache
+
+---
 The protocol's read paths (`registry-protocol.md`): `config.json`, each
 package's index file, and each archive, served as the bytes the bucket holds.
 Nothing here signs or decides anything; a client verifies every line and every
 archive it reads.
+
+Cached at the edge (R6.1, decisions B and C). `config.json` and the index
+files change in place (a delegation, a revocation, a yank, a withdrawal), so
+they are kept for 60 seconds at most, and revalidate against their `ETag`.
+That is the stated bound on a stale read: purging on every write would run
+into the purge rate limit. An archive is content-addressed, so it never
+changes: it is `immutable`, with its digest as a strong `ETag`, and only a
+takedown purges it. Each route serves every caller alike (`by Visitor`), as a
+`public` route in a context with an edge cache must.
 ---
 service files from http {
+	@cache(maxAge: 60.seconds, scope: public)
 	on GET("/config.json") () -> Effect[HttpResult[()]] by Visitor given Store {
 		let found <- Store.get(configKey())
 		match found {
@@ -26,6 +44,7 @@ service files from http {
 		}
 	}
 
+	@cache(maxAge: 60.seconds, scope: public)
 	on GET("/:org/:package") (
 		org: String,
 		package: String
@@ -42,13 +61,14 @@ service files from http {
 		}
 	}
 
+	@cache(maxAge: 365.days, scope: public, immutable: true)
 	on GET("/dl/sha256/:hex") (hex: String) -> Effect[HttpResult[()]] by Visitor given Store {
 		match archiveKey(hex) {
 			None => NotFound,
 			Some(key) => {
 				let found <- Store.get(key)
 				match found {
-					Some(body) => Raw(body, "application/vnd.bynk.tree-v1"),
+					Some(body) => RawTagged(body, "application/vnd.bynk.tree-v1", "\"\(hex)\""),
 					None => NotFound,
 				}
 			},
