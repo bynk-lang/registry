@@ -1,22 +1,30 @@
 #!/usr/bin/env bash
-# The deploy workflow's ref guard (first-party registry R5.3, #2392; track
-# D11): production deploys only a published release, from a tag on `main`; a
-# release candidate may go to staging, never to production.
+# The deploy workflow's ref guard (first-party registry R5.3,
+# bynk-lang/bynk#2392; track D11, re-targeted by R7, bynk-lang/bynk#2415,
+# decision E): production deploys only a published release of this repository,
+# from a tag on `main`; a release candidate may go to staging, never to
+# production. The toolchain is the `bynk` release that the tag's commit pins in
+# `bynk-toolchain`, which must itself be a published, final release.
 #
 #   scripts/deploy-guard.sh check <tag>
 #       Checks the tag's shape, then gathers the facts from GitHub with `gh`
 #       (GH_TOKEN; the repository is GITHUB_REPOSITORY, default
+#       bynk-lang/registry; the toolchain's is BYNK_TOOLCHAIN_REPO, default
 #       bynk-lang/bynk) and decides. Prints, for $GITHUB_OUTPUT:
 #         production=true|false   whether the tag may also go to production
 #         sha=<commit>            the commit the tag named when checked: the
 #                                 jobs deploy this, not the tag, which can move
-#         archive_sha256=<hex>    the release's toolchain archive and
+#         toolchain=<bynk tag>    the `bynk` release that commit pins
+#         archive_sha256=<hex>    that release's toolchain archive and
 #         module_sha256=<hex>     admission module, as SHA256SUMS listed them
 #                                 when checked: a later replaced asset fails
 #   scripts/deploy-guard.sh decide <tag> <release> <on-main>
 #       The decision alone, on given facts (scripts/test-deploy-guard.sh):
 #       <release> is `published`, `prerelease`, `draft` or `missing`;
 #       <on-main> is `yes` or `no`.
+#   scripts/deploy-guard.sh pinned <bynk tag> <release>
+#       Whether a pinned toolchain may be deployed with, on given facts:
+#       <release> as above, for the `bynk` release.
 #
 # A refusal exits 1 and says why on stderr.
 set -euo pipefail
@@ -53,6 +61,14 @@ decide() {
   if [[ "$kind" == candidate ]]; then echo "production=false"; else echo "production=true"; fi
 }
 
+# `pinned <bynk tag> <release>`: the pinned toolchain must be a final,
+# published `bynk` release: a candidate or a draft is never deployed with.
+pinned() {
+  local tag="$1" release="$2"
+  [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || refuse "\`bynk-toolchain\` names \`$tag\`, which isn't a final bynk release (vX.Y.Z)"
+  [[ "$release" == published ]] || refuse "the pinned toolchain \`$tag\` is $release, not a published bynk release"
+}
+
 # `sum <SHA256SUMS file> <asset>`: the asset's listed digest, exactly matched.
 sum() {
   awk -v name="$2" '$2 == name { print $1; found = 1 } END { exit !found }' "$1" ||
@@ -60,7 +76,8 @@ sum() {
 }
 
 check() {
-  local tag="$1" repo="${GITHUB_REPOSITORY:-bynk-lang/bynk}" release sha status on_main=no sums
+  local tag="$1" repo="${GITHUB_REPOSITORY:-bynk-lang/registry}" tools="${BYNK_TOOLCHAIN_REPO:-bynk-lang/bynk}"
+  local release sha status on_main=no sums toolchain toolchain_release
   shape "$tag" >/dev/null || exit 1
   release="$(gh release view "$tag" --repo "$repo" --json isDraft,isPrerelease \
     --jq 'if .isDraft then "draft" elif .isPrerelease then "prerelease" else "published" end' 2>/dev/null)" ||
@@ -72,15 +89,23 @@ check() {
   status="$(gh api "repos/$repo/compare/$sha...main" --jq .status 2>/dev/null)" || status=missing
   [[ "$status" == ahead || "$status" == identical ]] && on_main=yes
   decide "$tag" "$release" "$on_main"
+  # The toolchain that commit pins, read at the pinned commit, not at the tag.
+  toolchain="$(gh api "repos/$repo/contents/bynk-toolchain?ref=$sha" --jq .content 2>/dev/null | base64 -d | tr -d '[:space:]')" ||
+    refuse "\`$tag\` has no \`bynk-toolchain\`"
+  toolchain_release="$(gh release view "$toolchain" --repo "$tools" --json isDraft,isPrerelease \
+    --jq 'if .isDraft then "draft" elif .isPrerelease then "prerelease" else "published" end' 2>/dev/null)" ||
+    toolchain_release=missing
+  pinned "$toolchain" "$toolchain_release"
   sums="$(mktemp)"
-  gh release download "$tag" --repo "$repo" --pattern SHA256SUMS --output "$sums" --clobber 2>/dev/null ||
-    refuse "\`$tag\`'s release has no SHA256SUMS"
+  gh release download "$toolchain" --repo "$tools" --pattern SHA256SUMS --output "$sums" --clobber 2>/dev/null ||
+    refuse "the pinned toolchain \`$toolchain\`'s release has no SHA256SUMS"
   # A refusal inside $(…) exits only the subshell: each is checked here.
   local archive module
-  archive="$(sum "$sums" "bynk-$tag-$target.tar.gz")" || exit 1
-  module="$(sum "$sums" "bynk_registry_core-$tag.wasm")" || exit 1
+  archive="$(sum "$sums" "bynk-$toolchain-$target.tar.gz")" || exit 1
+  module="$(sum "$sums" "bynk_registry_core-$toolchain.wasm")" || exit 1
   rm -f "$sums"
   echo "sha=$sha"
+  echo "toolchain=$toolchain"
   echo "archive_sha256=$archive"
   echo "module_sha256=$module"
 }
@@ -88,5 +113,6 @@ check() {
 case "${1:-}" in
   check) [[ $# == 2 ]] || refuse "usage: deploy-guard.sh check <tag>"; check "$2" ;;
   decide) [[ $# == 4 ]] || refuse "usage: deploy-guard.sh decide <tag> <release> <on-main>"; decide "$2" "$3" "$4" ;;
-  *) refuse "usage: deploy-guard.sh check <tag> | decide <tag> <release> <on-main>" ;;
+  pinned) [[ $# == 3 ]] || refuse "usage: deploy-guard.sh pinned <bynk tag> <release>"; pinned "$2" "$3" && echo "pinned=ok" ;;
+  *) refuse "usage: deploy-guard.sh check <tag> | decide <tag> <release> <on-main> | pinned <bynk tag> <release>" ;;
 esac

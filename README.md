@@ -1,16 +1,50 @@
 # The first-party Bynk registry
 
-The hosted instance of the [registry protocol](../../site/src/content/docs/docs/registry-protocol.md):
+The hosted instance of the [registry protocol](https://bynk-lang.org/docs/registry-protocol/):
 the registry every organisation not routed elsewhere resolves on. It is
-written in Bynk and built with this repository's own toolchain. The design is
-the first-party registry track, [`design/tracks/first-party-registry.md`](../../design/tracks/first-party-registry.md)
-(spine [#2308](https://github.com/bynk-lang/bynk/issues/2308)).
+written in Bynk and built with a pinned `bynk` release (see "Building"). The
+design is the first-party registry track,
+[`design/tracks/first-party-registry.md`](https://github.com/bynk-lang/bynk/blob/main/design/tracks/first-party-registry.md)
+(spine [bynk-lang/bynk#2308](https://github.com/bynk-lang/bynk/issues/2308)).
 
-It lives here until the protocol and the `bynk-std` surface it uses settle,
-then moves to its own repository (track §1.3). Until then it keeps the
-extraction rules: it reaches only `bynk-std`, its own files and lock-pinned
-git dependencies — never a path into the compiler, never a registry
-dependency — and no account-specific configuration is committed.
+It was built inside [`bynk-lang/bynk`](https://github.com/bynk-lang/bynk), at
+`services/registry/`, and moved here before going live (R7,
+[bynk-lang/bynk#2415](https://github.com/bynk-lang/bynk/issues/2415)) with its
+history. Issue and PR numbers in that history, and in the comments here, are
+`bynk-lang/bynk`'s unless they say otherwise.
+
+**Its rules** (the track's extraction rules, E1–E5, now this repository's):
+
+- **E1.** A self-contained Bynk project. It reaches only `bynk-std`, its own
+  files and git dependencies pinned by its lock, never a path outside this
+  repository.
+- **E2.** No Rust inside the service. The shared admission rules cross an
+  adapter boundary as a wasm module from the pinned release.
+- **E3.** No account-specific configuration in git. Account ids, secrets and
+  the signing key come from the deploy's GitHub environments.
+- **E4.** CI checks every PR; deploys come only from the manual workflow.
+- **E5, kept forever.** No registry dependencies, so a broken registry, or a
+  bad toolchain release, can never stop the fix from being redeployed. CI
+  checks it (`scripts/check-no-registry-deps.py`).
+
+## Building
+
+`bynk-toolchain` names the one `bynk` release this service builds, tests and
+deploys with. Install it, and its admission module, with:
+
+```bash
+scripts/install-release.sh "$(scripts/toolchain.sh)" ~/.local/bin   # needs gh, signed in
+```
+
+Each asset is checked against that release's `SHA256SUMS`. `bynk-std` ships
+inside the toolchain, so the pin fixes it too. **Bumping the toolchain** is a
+PR that changes that one line; its CI is the proof. A capability the service
+needs lands in `bynk-lang/bynk` first, ships in a release, and the service then
+bumps its pin.
+
+`bynk-lang/bynk` runs this repository's checks daily against its own `main`
+(its `registry-canary` workflow), so a compiler change that would break the
+service is seen there before it is released.
 
 ## Layout
 
@@ -22,7 +56,10 @@ dependency — and no account-specific configuration is committed.
 | `src/registry/store/accounts.bynk` | Accounts: the `account` service, GitHub's device flow, and the `Organisation`, `PublishToken` and `Session` agents |
 | `src/registry/store/operator.bynk` | The operator routes: the takedown, its `Takedowns` log, and restoring an organisation |
 | `src/registry/admission.bynk` | `adapter registry.admission`: the shared rules (`bynk-registry-core`) as a wasm module |
-| `scripts/admission-module.sh` | Build that module into `src/registry/` (git-ignored) |
+| `scripts/admission-module.sh` | Install the pinned release's module into `src/registry/` (git-ignored) |
+| `bynk-toolchain`, `scripts/toolchain.sh` | The pinned `bynk` release, and the script that reads it |
+| `scripts/check-no-registry-deps.py` | E5: no registry dependencies |
+| `.github/workflows/ci.yml` | CI: the checks below, on the pinned release; `CI green` is the required check |
 | `src/registry/paths.bynk` | `commons registry.paths`: the object keys, and the name rules that guard them |
 | `tests/` | Unit tests: the key rules, and the read paths against a stubbed bucket |
 | `seed/seed.sh` | Upload a `bynk registry` directory into the bucket |
@@ -57,7 +94,7 @@ A missing object, or a name outside the manifest's rules (a malformed
 organisation, package or digest), is `404`; a malformed name never reaches the
 bucket. Nothing here signs or decides anything: clients verify every line's
 signature and every archive's checksum. The read paths aren't cached yet —
-that is the language slice L3 ([#2335](https://github.com/bynk-lang/bynk/issues/2335)).
+that is the language slice L3 ([bynk-lang/bynk#2335](https://github.com/bynk-lang/bynk/issues/2335)).
 
 ## Publishing
 
@@ -82,9 +119,13 @@ for a version taken down (and `409 withdrawn` to un-yank one), and
 **The rules are the shared crate's.** Admission, the bytes a line's signature
 covers, and what `config.json` says about a key all come from
 `bynk-registry-core`, the code the client and the reference server use, run as a
-wasm module through `adapter registry.admission`. The module is built, not
-committed: run `scripts/admission-module.sh` once after a clone, and again after
-a change to the rules (it needs the `wasm32-unknown-unknown` Rust target).
+wasm module through `adapter registry.admission`. The module is the pinned
+release's, never committed: `scripts/install-release.sh` (or
+`scripts/admission-module.sh` alone) installs it after a clone, and again after
+bumping `bynk-toolchain`. To try an unreleased change to the rules, build it
+from a `bynk-lang/bynk` checkout instead:
+`BYNK_REGISTRY_CORE_SRC=<checkout> scripts/admission-module.sh` (it needs the
+`wasm32-unknown-unknown` Rust target).
 
 **One writer per package.** `PackageIndex[<org>/<package>]` holds the package's
 lines and decides each append: new, a retry of the same tree, or a conflict. The
@@ -138,7 +179,7 @@ neither belongs in CI.
 People sign in with GitHub (the OAuth **device flow**: no password, no
 cookie, no GitHub credential kept), claim organisations, add members, and mint
 the publish tokens `bynk publish` uses. The `bynk` client drives it (R3.1,
-#2378; see the CLI reference for `bynk login` and `bynk org`):
+bynk-lang/bynk#2378; see the CLI reference for `bynk login` and `bynk org`):
 
 ```bash
 bynk login --registry <name>                # prints a code to approve at GitHub, then waits
@@ -379,19 +420,28 @@ example with `rclone`, from R2's S3-compatible API).
 ## Deploying
 
 Only `.github/workflows/deploy-registry.yml` deploys the service, run by hand
-from `main` with a release tag (Actions, "Deploy registry", Run workflow):
+from `main` with one of **this repository's** release tags (Actions, "Deploy
+registry", Run workflow). A release is a tag on `main` with a published GitHub
+release, and it carries no assets:
+
+```bash
+gh release create v0.1.0 --target main --title v0.1.0 --notes "…"
+```
 
 1. **The guard** (`scripts/deploy-guard.sh`, taken from `main`):
    - refuses a dispatch from any branch but `main`;
    - refuses anything but a `v<semver>` tag with a published GitHub release on
      `main`. A release candidate (`vX.Y.Z-rc.N`) may go to staging, never to
      production;
-   - **pins what it checked**: the commit the tag names, and the digests
-     `SHA256SUMS` lists for the release's toolchain archive and admission
+   - reads the `bynk-toolchain` that the tag's commit pins, and refuses it
+     unless it names a published, final `bynk` release;
+   - **pins what it checked**: the commit the tag names, that toolchain, and the
+     digests its `SHA256SUMS` lists for the toolchain archive and admission
      module.
 2. **Staging** (GitHub environment `registry-staging`): checks out the pinned
-   commit (not the tag, which could have moved), and installs the release's
-   `bynk` and admission module only if they match the pinned digests. Nothing
+   commit (not the tag, which could have moved), and installs the pinned
+   toolchain's `bynk` and admission module only if they match the pinned
+   digests. Nothing
    is built from source. Then it runs:
    - `bynk deploy --env staging`;
    - a full `bynk registry conformance` run;
@@ -402,7 +452,7 @@ from `main` with a release tag (Actions, "Deploy registry", Run workflow):
 
 **Rollback** is running the workflow with the previous tag.
 
-**What keeps this honest** (set up with the environments, in R6):
+**What keeps this honest** (set up on this repository with the environments, in R6, bynk-lang/bynk#2413):
 
 - **Both environments allow deployments from `main` only** (a deployment
   branch rule). A dispatch runs the workflow file *of the branch it names*, so

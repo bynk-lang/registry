@@ -1,0 +1,102 @@
+# The registry service's CI (R7, bynk-lang/bynk#2415): what bynk-lang/bynk's
+# `registry-service` job ran while the service lived there (R1–R5a.2), now on
+# the pinned toolchain release (`bynk-toolchain`, decision C) instead of the
+# PR's own compiler. Nothing is built from bynk-lang/bynk's source: the release's
+# `bynk`, `bynkc` and admission module are installed and checked against its
+# SHA256SUMS. A compiler change that would break the service is caught in
+# bynk-lang/bynk by its `registry-canary` (decision D), not here.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  merge_group:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A new push to a PR branch cancels the superseded run for that ref.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+defaults:
+  run:
+    shell: bash # -eo pipefail
+
+jobs:
+  service:
+    name: Service (check, test, conformance)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      GH_TOKEN: ${{ github.token }}
+      WRANGLER: npx -y wrangler@4
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v6
+        with:
+          node-version: "22"
+      - name: Install the pinned toolchain and its admission module
+        run: |
+          scripts/install-release.sh "$(scripts/toolchain.sh)" "$RUNNER_TEMP/bynk"
+          echo "$RUNNER_TEMP/bynk" >> "$GITHUB_PATH"
+          echo "BYNK=$RUNNER_TEMP/bynk/bynk" >> "$GITHUB_ENV"
+          echo "BYNK_BYNKC=$RUNNER_TEMP/bynk/bynkc" >> "$GITHUB_ENV"
+      - name: No registry dependencies (E5)
+        run: python3 scripts/check-no-registry-deps.py bynk.toml
+      - name: Pre-warm the npx cache for wrangler
+        run: npx -y wrangler@4 --version
+      - name: Check and test the service
+        run: |
+          bynk --version
+          bynk fmt --check .
+          bynk check
+          bynk test
+      - name: Read path, end to end (seed, serve, conformance)
+        run: scripts/check-read-path.sh
+      - name: Publish API, end to end (full conformance, the real client, a stray key)
+        run: scripts/check-publish.sh
+      - name: Accounts, end to end (a fake GitHub, claims, tokens, conformance)
+        run: scripts/check-accounts.sh
+      - name: Trusted publishing, end to end (a fake OIDC issuer, the exchange, conformance)
+        run: scripts/check-trusted.sh
+      - name: Abuse limits, end to end (rate limits under bynk dev, the quota through the real client)
+        run: scripts/check-limits.sh
+      - name: Export and restore, end to end (the cron export, a fresh bucket restored from the backup)
+        run: scripts/check-export.sh
+      - name: Takedowns, end to end (an operator withdraws a version, the client and conformance see it; an organisation restored)
+        run: scripts/check-withdraw.sh
+
+  deploy-workflow:
+    name: Deploy workflow (the guard's decisions, and actionlint)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: |
+          scripts/test-deploy-guard.sh
+          docker run --rm -v "$PWD:/repo" -w /repo rhysd/actionlint:1.7.7 .github/workflows/ci.yml .github/workflows/deploy-registry.yml
+
+  ci-green:
+    # The single required status check, as in bynk-lang/bynk: the ruleset
+    # requires THIS job, so a job renamed or added above can't desync it.
+    # `if: always()` makes it report even when an upstream failed.
+    name: CI green
+    if: always()
+    needs: [service, deploy-workflow]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Every needed job passed
+        env:
+          RESULTS: ${{ toJSON(needs.*.result) }}
+        run: |
+          echo "$RESULTS"
+          jq -e 'all(.[]; . == "success" or . == "skipped")' <<< "$RESULTS" > /dev/null

@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# The deploy guard's decisions (R5.3, #2392), on given facts.
+# The deploy guard's decisions (R5.3, bynk-lang/bynk#2392; R7,
+# bynk-lang/bynk#2415), on given facts.
 #
 #   scripts/test-deploy-guard.sh
 set -euo pipefail
@@ -38,5 +39,20 @@ refuses v1.2.3-rc.1 draft yes
 refuses v1.2.3 prerelease yes
 refuses v1.2.3 published no
 refuses v1.2.3-rc.1 prerelease no
+
+# The pinned toolchain (R7, decision E): a final, published bynk release only.
+pins() { # pins <bynk tag> <release>
+  if "$guard" pinned "$@" >/dev/null 2>&1; then echo "  pass  pins $*"; else echo "  FAIL  pins $*: refused"; failed=1; fi
+}
+refuses_pin() { # refuses_pin <bynk tag> <release>
+  if "$guard" pinned "$@" >/dev/null 2>&1; then echo "  FAIL  refuses_pin $*: it was accepted"; failed=1; else echo "  pass  refuses_pin $*"; fi
+}
+pins v0.403.2 published
+refuses_pin v0.403.2-rc.1 published
+refuses_pin v0.403.2 prerelease
+refuses_pin v0.403.2 draft
+refuses_pin v0.403.2 missing
+refuses_pin main published
+refuses_pin "" published
 
 exit "$failed"
