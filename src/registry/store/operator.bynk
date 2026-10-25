@@ -14,8 +14,9 @@ operator token's sha256 (its id in `REGISTRY_TOKENS`), the version, its tree,
 the reason, what became of the archive: `deleted`, `missing` (already gone),
 `shared` (kept for another live version), or `finished` (a repeat that
 finished what an interrupted takedown left), and what became of the edge's
-copy (R6.1): `purged`, `purge_failed` (Cloudflare refused the purge, as it
-does past its rate limit), or `kept` (a shared archive, still served).
+copy (R6.1): `purged` (the archive and the package's index file),
+`purge_failed` (Cloudflare refused the purge, as it does past its rate limit),
+or `kept` (a shared archive, still served; only the index file is purged).
 ---
 type TakedownRecord = {
 	at: Int,
@@ -190,11 +191,13 @@ provides Takedown = BucketTakedown given Store, Backup, Clock, IndexFiles, Edge 
 		)
 		// The edge's copy, purged after both deletes so a request between them
 		// can't refill it. Exactly the archive's path: a content address has a
-		// fixed length, so the prefix names no other archive. A refused purge
+		// fixed length, so the prefix names no other archive. The package's
+		// index file goes in the same purge, so the withdrawal is seen at once
+		// rather than within its 60 seconds, as a yank's is. A refused purge
 		// (Cloudflare's rate limit) leaves the takedown unfinished, so repeating
-		// it purges again.
+		// it purges both again.
 		let purge = (key: String) => {
-			let accepted <- Edge.purge(["/\(key)"])
+			let accepted <- Edge.purge(["/\(key)", "/\(name)"])
 			Effect.pure(if accepted { "purged" } else { "purge_failed" })
 		}
 		match done {
@@ -205,6 +208,9 @@ provides Takedown = BucketTakedown given Store, Backup, Clock, IndexFiles, Edge 
 					"`\(name)` \(version) was withdrawn, but its checksum names no archive: \(line.checksum)"
 				)),
 				Some(key) => if shared {
+					// The archive stays, so only the index file is purged. As with
+					// a yank, a refused purge leaves the 60-second bound.
+					let _ <- Edge.purge(["/\(name)"])
 					let _ <- logged(line, "shared", "kept")
 					Effect.pure(TookDown(line, "shared", "kept"))
 				} else {

@@ -126,9 +126,11 @@ jobs:
             --format json > "$RUNNER_TEMP/conformance.json" || status=$?
           jq -r '.checks[] | "\(.outcome)\t\(.id)\t\(.detail)"' "$RUNNER_TEMP/conformance.json"
           exit "$status"
-      # Conformance reads with its publish token, so it says nothing about what
-      # an anonymous consumer gets. `bynk dev` has no edge cache, so this is the
-      # only place the cache is checked (R6.1, bynk-lang/bynk#2413; ADR 0613 F).
+      # Conformance checks what is served, never whether the edge served it, and
+      # `bynk dev` has no edge cache, so this is the only place the cache is
+      # checked (R6.1, bynk-lang/bynk#2413; ADR 0613 F). Its reads carry its
+      # token, which doesn't bypass a `public` copy (ADR 0613 G); this step reads
+      # with none, as a consumer does.
       # The archive of the version conformance just published: a second
       # anonymous fetch must be an edge hit; a takedown must purge it, so the
       # next fetch is the origin's 404, not the cached bytes.
