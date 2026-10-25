@@ -112,12 +112,19 @@ the Worker:
 - **60 seconds is the bound on a stale read.** `config.json` and the index
   files change in place: a delegation or a revocation, a yank, a withdrawal.
   Anyone reading through the edge sees such a change within a minute.
-- **A yank or an un-yank purges its index file** (`/<org>/<package>`), so it
-  is seen at once. A publish doesn't: a stale read only lacks the new line for
-  up to a minute, and purging on every publish would run into the purge rate
-  limit. If Cloudflare refuses a yank's purge, the yank still stands and the
-  60-second bound still holds. A staging conformance run depends on this purge:
-  it reads an index, yanks, and reads it again within seconds.
+- **A yank, an un-yank or a takedown purges the package's index file**
+  (`/<org>/<package>`), so the change is seen at once. This deliberately
+  relaxes #2413's "purge only on takedown": a yank is rare, and the people it
+  is for should not install the version for another minute. A publish doesn't
+  purge: a stale read only lacks the new line for up to a minute, and purging
+  on every publish would run into the purge rate limit. If Cloudflare refuses
+  a yank's purge, the yank still stands and the 60-second bound still holds.
+  Staging conformance relies on it too: it reads an index, yanks, and reads it
+  again within seconds, with its token, which doesn't bypass a `public` copy
+  (below).
+- **`config.json` is never purged.** Nothing in the service writes it: a
+  delegation or revocation reaches it by seeding (`seed/seed.sh`), and is seen
+  within 60 seconds.
 - **An archive never changes,** so it is kept for good. Only a takedown purges
   it (see "Takedowns").
 - **Everyone gets the same answer.** The edge keys a response by its URL alone,
@@ -387,8 +394,9 @@ It:
 - marks the line `yanked`, with the reason as its unsigned `withdrawn`. Nothing
   is re-signed;
 - deletes the archive from the store and the backup;
-- purges `/dl/sha256/<hex>` from the edge. A content address has a fixed
-  length, so the purge names no other archive;
+- purges `/dl/sha256/<hex>` and the package's index file from the edge, in
+  one purge. A content address has a fixed length, so the purge names no other
+  archive. A shared archive stays, so then only the index file is purged;
 - gives the organisation its bytes back on the quota;
 - logs who (the token's sha256), when, what, why, and what became of the
   archive and of the edge's copy.
@@ -517,8 +525,8 @@ gh release create v0.1.0 --target main --title v0.1.0 --notes "…"
    - **the edge cache, with anonymous reads:** a repeated fetch of the archive
      conformance just published must be `cf-cache-status: HIT`. Then a takedown
      of that version must answer `"edge": "purged"`, and the next fetch must be
-     the origin's `404`. Conformance can't show this, because `bynk dev` has no
-     cache and conformance reads with its token;
+     the origin's `404`. Conformance can't show this: it checks what is served,
+     never whether the edge served it, and `bynk dev` has no cache;
    - a trusted-publishing exchange with the workflow's own OIDC token.
 3. **Production** (environment `registry-production`, with required reviewers:
    the approval) does the same with `--env production`, then runs the

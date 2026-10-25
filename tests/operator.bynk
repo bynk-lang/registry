@@ -35,7 +35,7 @@ suite registry.store {
 			&& a.edge == "purged"
 			&& a.package == "acme/money"
 			&& a.reason == "malware, reported 2026-10-24"
-		expect Edge.purge called once with prefixes == ["/dl/sha256/0000000000000000000000000000000000000000000000000000000000000000"]
+		expect Edge.purge called once with prefixes == ["/dl/sha256/0000000000000000000000000000000000000000000000000000000000000000", "/acme/money"]
 		let stored <- Store.head(key)
 		expect stored == None
 		let backed <- Backup.head(key)
@@ -266,7 +266,7 @@ suite registry.store {
 			RequestHeaders.of(["Authorization: Bearer op"])
 		) by Visitor
 		expect retried is Ok(a) && a.archive == "finished" && a.edge == "purged"
-		expect Edge.purge called once with prefixes == ["/dl/sha256/0000000000000000000000000000000000000000000000000000000000000000"]
+		expect Edge.purge called once with prefixes == ["/dl/sha256/0000000000000000000000000000000000000000000000000000000000000000", "/acme/money"]
 		let done <- operator.POST(
 			"/_operator/withdraw/:org/:package/:version",
 			"acme",
@@ -326,7 +326,7 @@ suite registry.store {
 			RequestHeaders.of(["Authorization: Bearer op"])
 		) by Visitor
 		expect again is RawError(409, _, _)
-		expect Edge.purge called once
+		expect Edge.purge called 2 times
 	}
 
 	case "an archive another live version names is kept" {
@@ -358,7 +358,7 @@ suite registry.store {
 		expect r is Ok(a) && a.archive == "shared" && a.edge == "kept"
 		let stored <- Store.head(key)
 		expect stored.isSome()
-		expect Edge.purge called 0 times
+		expect Edge.purge called once with prefixes == ["/acme/money"]
 	}
 
 	case "a missing package or version is 404" {
