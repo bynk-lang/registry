@@ -2,8 +2,8 @@
 # `registry-service` job ran while the service lived there (R1–R5a.2), now on
 # the pinned toolchain release (`bynk-toolchain`, decision C) instead of the
 # PR's own compiler. Nothing is built from bynk-lang/bynk's source: the release's
-# `bynk`, `bynkc` and admission module are installed and checked against its
-# SHA256SUMS. A compiler change that would break the service is caught in
+# `bynk` driver (it compiles in-process) and admission module are installed
+# and checked against its SHA256SUMS. A compiler change that would break the service is caught in
 # bynk-lang/bynk by its `registry-canary` (decision D), not here.
 name: CI
 
@@ -46,7 +46,6 @@ jobs:
           scripts/install-release.sh "$(scripts/toolchain.sh)" "$RUNNER_TEMP/bynk"
           echo "$RUNNER_TEMP/bynk" >> "$GITHUB_PATH"
           echo "BYNK=$RUNNER_TEMP/bynk/bynk" >> "$GITHUB_ENV"
-          echo "BYNK_BYNKC=$RUNNER_TEMP/bynk/bynkc" >> "$GITHUB_ENV"
       - name: No registry dependencies (E5)
         run: python3 scripts/check-no-registry-deps.py bynk.toml
       - name: Pre-warm the npx cache for wrangler
