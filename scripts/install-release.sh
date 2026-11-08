@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Install a released toolchain and admission module (R5.3, bynk-lang/bynk#2392;
-# R7, bynk-lang/bynk#2415): the `bynk` release's `bynk` and `bynkc` for x86_64
-# Linux, and its `bynk_registry_core` module. Nothing is built from source.
+# R7, bynk-lang/bynk#2415): the `bynk` release's `bynk` driver for x86_64
+# Linux (it compiles in-process; there is no `bynkc`), and its
+# `bynk_registry_core` module. Nothing is built from source.
 #
 #   GH_TOKEN=… [ARCHIVE_SHA256=<hex> MODULE_SHA256=<hex>] \
 #     scripts/install-release.sh <bynk tag> <bin dir>
@@ -48,6 +49,6 @@ verify "$archive" "$archive_sha"
 verify "$module" "$module_sha"
 mkdir -p "$bin"
 tar -xzf "$work/$archive" -C "$work"
-install -m 0755 "$work/bynk-$tag-$target/bynk" "$work/bynk-$tag-$target/bynkc" "$bin/"
+install -m 0755 "$work/bynk-$tag-$target/bynk" "$bin/"
 install -m 0644 "$work/$module" "$here/src/registry/bynk_registry_core.wasm"
 echo "install-release: bynk $tag and its admission module, checked"

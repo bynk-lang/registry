@@ -16,6 +16,14 @@ kind = "Cell"
 type = "List[String]"
 refinement = "List[String]"
 
+[[agents."registry.store.Directory".shapes.fields.paths]]
+path = "names"
+type = "List"
+
+[[agents."registry.store.Directory".shapes.fields.paths]]
+path = "names[]"
+type = "String"
+
 [agents."registry.store.ExportRun"]
 version = 1
 floor = 1
@@ -30,17 +38,125 @@ kind = "Cell"
 type = "Option[{copied: Int, failures: Int, finishedAt: Option[Int], objects: Int, organisations: Int, packages: Int, startedAt: Int}]"
 refinement = "Option[{copied: Int, failures: Int, finishedAt: Option[Int], objects: Int, organisations: Int, packages: Int, startedAt: Int}]"
 
+[[agents."registry.store.ExportRun".shapes.fields.paths]]
+path = "current"
+type = "Option"
+
+[[agents."registry.store.ExportRun".shapes.fields.paths]]
+path = "current?"
+type = "{}"
+
+[[agents."registry.store.ExportRun".shapes.fields.paths]]
+path = "current?.copied"
+type = "Int"
+
+[[agents."registry.store.ExportRun".shapes.fields.paths]]
+path = "current?.failures"
+type = "Int"
+
+[[agents."registry.store.ExportRun".shapes.fields.paths]]
+path = "current?.finishedAt"
+type = "Option"
+
+[[agents."registry.store.ExportRun".shapes.fields.paths]]
+path = "current?.finishedAt?"
+type = "Int"
+
+[[agents."registry.store.ExportRun".shapes.fields.paths]]
+path = "current?.objects"
+type = "Int"
+
+[[agents."registry.store.ExportRun".shapes.fields.paths]]
+path = "current?.organisations"
+type = "Int"
+
+[[agents."registry.store.ExportRun".shapes.fields.paths]]
+path = "current?.packages"
+type = "Int"
+
+[[agents."registry.store.ExportRun".shapes.fields.paths]]
+path = "current?.startedAt"
+type = "Int"
+
 [[agents."registry.store.ExportRun".shapes.fields]]
 name = "last"
 kind = "Cell"
 type = "Option[{copied: Int, failures: Int, finishedAt: Option[Int], objects: Int, organisations: Int, packages: Int, startedAt: Int}]"
 refinement = "Option[{copied: Int, failures: Int, finishedAt: Option[Int], objects: Int, organisations: Int, packages: Int, startedAt: Int}]"
 
+[[agents."registry.store.ExportRun".shapes.fields.paths]]
+path = "last"
+type = "Option"
+
+[[agents."registry.store.ExportRun".shapes.fields.paths]]
+path = "last?"
+type = "{}"
+
+[[agents."registry.store.ExportRun".shapes.fields.paths]]
+path = "last?.copied"
+type = "Int"
+
+[[agents."registry.store.ExportRun".shapes.fields.paths]]
+path = "last?.failures"
+type = "Int"
+
+[[agents."registry.store.ExportRun".shapes.fields.paths]]
+path = "last?.finishedAt"
+type = "Option"
+
+[[agents."registry.store.ExportRun".shapes.fields.paths]]
+path = "last?.finishedAt?"
+type = "Int"
+
+[[agents."registry.store.ExportRun".shapes.fields.paths]]
+path = "last?.objects"
+type = "Int"
+
+[[agents."registry.store.ExportRun".shapes.fields.paths]]
+path = "last?.organisations"
+type = "Int"
+
+[[agents."registry.store.ExportRun".shapes.fields.paths]]
+path = "last?.packages"
+type = "Int"
+
+[[agents."registry.store.ExportRun".shapes.fields.paths]]
+path = "last?.startedAt"
+type = "Int"
+
 [[agents."registry.store.ExportRun".shapes.fields]]
 name = "phase"
 kind = "Cell"
 type = "|Bucket(cursor: Option[String])|Idle|Organisations(offset: Int)"
 refinement = "|Bucket(cursor: Option[String])|Idle|Organisations(offset: Int)"
+
+[[agents."registry.store.ExportRun".shapes.fields.paths]]
+path = "phase"
+type = "|"
+
+[[agents."registry.store.ExportRun".shapes.fields.paths]]
+path = "phase|Bucket"
+type = "variant"
+
+[[agents."registry.store.ExportRun".shapes.fields.paths]]
+path = "phase|Bucket.cursor"
+type = "Option"
+
+[[agents."registry.store.ExportRun".shapes.fields.paths]]
+path = "phase|Bucket.cursor?"
+type = "String"
+
+[[agents."registry.store.ExportRun".shapes.fields.paths]]
+path = "phase|Idle"
+type = "variant"
+
+[[agents."registry.store.ExportRun".shapes.fields.paths]]
+path = "phase|Organisations"
+type = "variant"
+
+[[agents."registry.store.ExportRun".shapes.fields.paths]]
+path = "phase|Organisations.offset"
+type = "Int"
 
 [agents."registry.store.OrgUsage"]
 version = 1
@@ -55,6 +171,10 @@ name = "bytes"
 kind = "Cell"
 type = "Int"
 refinement = "Int"
+
+[[agents."registry.store.OrgUsage".shapes.fields.paths]]
+path = "bytes"
+type = "Int"
 
 [agents."registry.store.Organisation"]
 version = 2
@@ -98,11 +218,31 @@ kind = "Cell"
 type = "Bool"
 refinement = "Bool"
 
+[[agents."registry.store.Organisation".shapes.fields.paths]]
+path = "blocked"
+type = "Bool"
+
 [[agents."registry.store.Organisation".shapes.fields]]
 name = "members"
 kind = "Cell"
 type = "List[{id: Int, login: String}]"
 refinement = "List[{id: Int, login: String}]"
+
+[[agents."registry.store.Organisation".shapes.fields.paths]]
+path = "members"
+type = "List"
+
+[[agents."registry.store.Organisation".shapes.fields.paths]]
+path = "members[]"
+type = "{}"
+
+[[agents."registry.store.Organisation".shapes.fields.paths]]
+path = "members[].id"
+type = "Int"
+
+[[agents."registry.store.Organisation".shapes.fields.paths]]
+path = "members[].login"
+type = "String"
 
 [[agents."registry.store.Organisation".shapes.fields]]
 name = "owner"
@@ -110,17 +250,105 @@ kind = "Cell"
 type = "Option[{id: Int, login: String}]"
 refinement = "Option[{id: Int, login: String}]"
 
+[[agents."registry.store.Organisation".shapes.fields.paths]]
+path = "owner"
+type = "Option"
+
+[[agents."registry.store.Organisation".shapes.fields.paths]]
+path = "owner?"
+type = "{}"
+
+[[agents."registry.store.Organisation".shapes.fields.paths]]
+path = "owner?.id"
+type = "Int"
+
+[[agents."registry.store.Organisation".shapes.fields.paths]]
+path = "owner?.login"
+type = "String"
+
 [[agents."registry.store.Organisation".shapes.fields]]
 name = "tokens"
 kind = "Cell"
 type = "List[{can: List[String], expiresAt: Int, id: String, mintedBy: Int, note: String}]"
 refinement = "List[{can: List[String], expiresAt: Int, id: String, mintedBy: Int, note: String}]"
 
+[[agents."registry.store.Organisation".shapes.fields.paths]]
+path = "tokens"
+type = "List"
+
+[[agents."registry.store.Organisation".shapes.fields.paths]]
+path = "tokens[]"
+type = "{}"
+
+[[agents."registry.store.Organisation".shapes.fields.paths]]
+path = "tokens[].can"
+type = "List"
+
+[[agents."registry.store.Organisation".shapes.fields.paths]]
+path = "tokens[].can[]"
+type = "String"
+
+[[agents."registry.store.Organisation".shapes.fields.paths]]
+path = "tokens[].expiresAt"
+type = "Int"
+
+[[agents."registry.store.Organisation".shapes.fields.paths]]
+path = "tokens[].id"
+type = "String"
+
+[[agents."registry.store.Organisation".shapes.fields.paths]]
+path = "tokens[].mintedBy"
+type = "Int"
+
+[[agents."registry.store.Organisation".shapes.fields.paths]]
+path = "tokens[].note"
+type = "String"
+
 [[agents."registry.store.Organisation".shapes.fields]]
 name = "trusted"
 kind = "Cell"
 type = "List[{can: List[String], environment: Option[String], id: String, repository: String, repositoryId: String, workflow: String}]"
 refinement = "List[{can: List[String], environment: Option[String], id: String, repository: String, repositoryId: String, workflow: String}]"
+
+[[agents."registry.store.Organisation".shapes.fields.paths]]
+path = "trusted"
+type = "List"
+
+[[agents."registry.store.Organisation".shapes.fields.paths]]
+path = "trusted[]"
+type = "{}"
+
+[[agents."registry.store.Organisation".shapes.fields.paths]]
+path = "trusted[].can"
+type = "List"
+
+[[agents."registry.store.Organisation".shapes.fields.paths]]
+path = "trusted[].can[]"
+type = "String"
+
+[[agents."registry.store.Organisation".shapes.fields.paths]]
+path = "trusted[].environment"
+type = "Option"
+
+[[agents."registry.store.Organisation".shapes.fields.paths]]
+path = "trusted[].environment?"
+type = "String"
+
+[[agents."registry.store.Organisation".shapes.fields.paths]]
+path = "trusted[].id"
+type = "String"
+
+[[agents."registry.store.Organisation".shapes.fields.paths]]
+path = "trusted[].repository"
+type = "String"
+
+[[agents."registry.store.Organisation".shapes.fields.paths]]
+path = "trusted[].repositoryId"
+type = "String"
+
+[[agents."registry.store.Organisation".shapes.fields.paths]]
+path = "trusted[].workflow"
+type = "String"
 
 [agents."registry.store.PackageIndex"]
 version = 1
@@ -136,11 +364,23 @@ kind = "Cell"
 type = "Bool"
 refinement = "Bool"
 
+[[agents."registry.store.PackageIndex".shapes.fields.paths]]
+path = "adopted"
+type = "Bool"
+
 [[agents."registry.store.PackageIndex".shapes.fields]]
 name = "lines"
 kind = "Cell"
 type = "List[Line]"
 refinement = "List[Line]"
+
+[[agents."registry.store.PackageIndex".shapes.fields.paths]]
+path = "lines"
+type = "List"
+
+[[agents."registry.store.PackageIndex".shapes.fields.paths]]
+path = "lines[]"
+type = "Line"
 
 [agents."registry.store.PublishToken"]
 version = 1
@@ -156,6 +396,34 @@ kind = "Cell"
 type = "Option[{can: List[String], expiresAt: Int, org: String, revoked: Bool}]"
 refinement = "Option[{can: List[String], expiresAt: Int, org: String, revoked: Bool}]"
 
+[[agents."registry.store.PublishToken".shapes.fields.paths]]
+path = "grant"
+type = "Option"
+
+[[agents."registry.store.PublishToken".shapes.fields.paths]]
+path = "grant?"
+type = "{}"
+
+[[agents."registry.store.PublishToken".shapes.fields.paths]]
+path = "grant?.can"
+type = "List"
+
+[[agents."registry.store.PublishToken".shapes.fields.paths]]
+path = "grant?.can[]"
+type = "String"
+
+[[agents."registry.store.PublishToken".shapes.fields.paths]]
+path = "grant?.expiresAt"
+type = "Int"
+
+[[agents."registry.store.PublishToken".shapes.fields.paths]]
+path = "grant?.org"
+type = "String"
+
+[[agents."registry.store.PublishToken".shapes.fields.paths]]
+path = "grant?.revoked"
+type = "Bool"
+
 [agents."registry.store.Session"]
 version = 1
 floor = 1
@@ -170,11 +438,31 @@ kind = "Cell"
 type = "Int"
 refinement = "Int"
 
+[[agents."registry.store.Session".shapes.fields.paths]]
+path = "expiresAt"
+type = "Int"
+
 [[agents."registry.store.Session".shapes.fields]]
 name = "user"
 kind = "Cell"
 type = "Option[{id: Int, login: String}]"
 refinement = "Option[{id: Int, login: String}]"
+
+[[agents."registry.store.Session".shapes.fields.paths]]
+path = "user"
+type = "Option"
+
+[[agents."registry.store.Session".shapes.fields.paths]]
+path = "user?"
+type = "{}"
+
+[[agents."registry.store.Session".shapes.fields.paths]]
+path = "user?.id"
+type = "Int"
+
+[[agents."registry.store.Session".shapes.fields.paths]]
+path = "user?.login"
+type = "String"
 
 [agents."registry.store.Takedowns"]
 version = 1
@@ -190,6 +478,46 @@ kind = "Cell"
 type = "List[{archive: String, at: Int, checksum: String, edge: String, package: String, reason: String, tokenId: String, version: String}]"
 refinement = "List[{archive: String, at: Int, checksum: String, edge: String, package: String, reason: String, tokenId: String, version: String}]"
 
+[[agents."registry.store.Takedowns".shapes.fields.paths]]
+path = "records"
+type = "List"
+
+[[agents."registry.store.Takedowns".shapes.fields.paths]]
+path = "records[]"
+type = "{}"
+
+[[agents."registry.store.Takedowns".shapes.fields.paths]]
+path = "records[].archive"
+type = "String"
+
+[[agents."registry.store.Takedowns".shapes.fields.paths]]
+path = "records[].at"
+type = "Int"
+
+[[agents."registry.store.Takedowns".shapes.fields.paths]]
+path = "records[].checksum"
+type = "String"
+
+[[agents."registry.store.Takedowns".shapes.fields.paths]]
+path = "records[].edge"
+type = "String"
+
+[[agents."registry.store.Takedowns".shapes.fields.paths]]
+path = "records[].package"
+type = "String"
+
+[[agents."registry.store.Takedowns".shapes.fields.paths]]
+path = "records[].reason"
+type = "String"
+
+[[agents."registry.store.Takedowns".shapes.fields.paths]]
+path = "records[].tokenId"
+type = "String"
+
+[[agents."registry.store.Takedowns".shapes.fields.paths]]
+path = "records[].version"
+type = "String"
+
 [agents."registry.store.TrustedRepository"]
 version = 1
 floor = 1
@@ -204,8 +532,60 @@ kind = "Cell"
 type = "List[{can: List[String], environment: Option[String], org: String, publisherId: String, workflow: String}]"
 refinement = "List[{can: List[String], environment: Option[String], org: String, publisherId: String, workflow: String}]"
 
+[[agents."registry.store.TrustedRepository".shapes.fields.paths]]
+path = "entries"
+type = "List"
+
+[[agents."registry.store.TrustedRepository".shapes.fields.paths]]
+path = "entries[]"
+type = "{}"
+
+[[agents."registry.store.TrustedRepository".shapes.fields.paths]]
+path = "entries[].can"
+type = "List"
+
+[[agents."registry.store.TrustedRepository".shapes.fields.paths]]
+path = "entries[].can[]"
+type = "String"
+
+[[agents."registry.store.TrustedRepository".shapes.fields.paths]]
+path = "entries[].environment"
+type = "Option"
+
+[[agents."registry.store.TrustedRepository".shapes.fields.paths]]
+path = "entries[].environment?"
+type = "String"
+
+[[agents."registry.store.TrustedRepository".shapes.fields.paths]]
+path = "entries[].org"
+type = "String"
+
+[[agents."registry.store.TrustedRepository".shapes.fields.paths]]
+path = "entries[].publisherId"
+type = "String"
+
+[[agents."registry.store.TrustedRepository".shapes.fields.paths]]
+path = "entries[].workflow"
+type = "String"
+
 [[agents."registry.store.TrustedRepository".shapes.fields]]
 name = "spent"
 kind = "Cell"
 type = "List[{at: Int, jti: String}]"
 refinement = "List[{at: Int, jti: String}]"
+
+[[agents."registry.store.TrustedRepository".shapes.fields.paths]]
+path = "spent"
+type = "List"
+
+[[agents."registry.store.TrustedRepository".shapes.fields.paths]]
+path = "spent[]"
+type = "{}"
+
+[[agents."registry.store.TrustedRepository".shapes.fields.paths]]
+path = "spent[].at"
+type = "Int"
+
+[[agents."registry.store.TrustedRepository".shapes.fields.paths]]
+path = "spent[].jti"
+type = "String"
