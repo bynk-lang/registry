@@ -1,0 +1,13 @@
+# Keeps the pinned GitHub Actions current, including action.yml's own steps
+# where this repo is an action. Every action is pinned by commit SHA, so
+# updates arrive as one grouped pull request a week rather than moving under a
+# tag. The Bynk version itself moves by the org canary's bump pull request.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]
