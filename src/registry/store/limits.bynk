@@ -6,7 +6,7 @@ context registry.store
 
 consumes bynk.cloudflare { RateLimit }
 consumes bynk { Secrets }
-consumes bynk.crypto { Crypto }
+consumes bynk.crypto { Crypto, Digest }
 
 ---
 Publishes, yanks and unyanks by one token: 60 a minute, keyed by the token's

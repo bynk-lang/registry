@@ -7,7 +7,7 @@ context registry.store
 
 uses registry.paths
 consumes bynk { Secrets }
-consumes bynk.crypto { Crypto }
+consumes bynk.crypto { Crypto, Digest, Signature }
 consumes registry.admission { Admit }
 
 ---
