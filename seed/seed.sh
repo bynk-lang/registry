@@ -20,16 +20,19 @@ usage() { echo "usage: seed.sh <registry-dir> --bucket <name> [--local --persist
 # Normalised to an absolute path, so `./reg/`, `reg` and `.` all key alike.
 dir="$(cd "$1" 2>/dev/null && pwd)" || { echo "seed.sh: no directory \`$1\`" >&2; exit 1; }
 shift
-bucket=""; local_args=()
+# Wrangler 4 writes `r2 object put` to local storage unless told otherwise, so
+# a real bucket needs `--remote` said explicitly.
+bucket=""; local_args=(); remote=1
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --bucket) [[ $# -ge 2 ]] || usage; bucket="$2"; shift 2 ;;
-    --local) local_args+=(--local); shift ;;
+    --local) local_args+=(--local); remote=0; shift ;;
     --persist-to) [[ $# -ge 2 ]] || usage; local_args+=(--persist-to "$2"); shift 2 ;;
     *) usage ;;
   esac
 done
 [[ -n "$bucket" ]] || usage
+[[ $remote == 1 ]] && local_args+=(--remote)
 [[ -f "$dir/config.json" ]] || { echo "seed.sh: \`$dir\` isn't a registry (no config.json)" >&2; exit 1; }
 
 # `WRANGLER` may be a command with arguments (`npx -y wrangler@4`).
@@ -37,8 +40,7 @@ read -r -a wrangler <<< "${WRANGLER:-wrangler}"
 count=0
 while IFS= read -r -d '' file; do
   key="${file#"$dir"/}"
-  # `${a[@]+…}`: an empty array under `set -u` on bash < 4.4 (macOS's 3.2).
-  "${wrangler[@]}" r2 object put "$bucket/$key" --file "$file" ${local_args[@]+"${local_args[@]}"} >/dev/null
+  "${wrangler[@]}" r2 object put "$bucket/$key" --file "$file" "${local_args[@]}" >/dev/null
   count=$((count + 1))
 done < <(find "$dir" -mindepth 1 -name '.*' -prune -o -type f -print0 | sort -z)
 [[ $count -gt 0 ]] || { echo "seed.sh: \`$dir\` has no files to seed" >&2; exit 1; }
