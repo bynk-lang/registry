@@ -5,8 +5,8 @@
 context registry.store
 
 uses registry.paths
-consumes bynk { Secrets, Random, Clock, Fetch }
-consumes bynk.crypto { Crypto }
+consumes bynk { Secrets, Random, Clock, Fetch, Request, Method }
+consumes bynk.crypto { Crypto, Digest }
 
 ---
 A GitHub user, by GitHub's numeric id (stable) and login (for display: a
