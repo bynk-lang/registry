@@ -317,6 +317,23 @@ PY
 # ---------------------------------------------------------------------------
 # deploy: every secret from the files above, overwriting what is there.
 
+# The lookups the Worker makes with GITHUB_API_TOKEN, made here first: a
+# fine-grained token whose resource owner isn't the repository's can see users
+# but not the repository, and the trusted publisher then fails as "GitHub has no
+# repository". The header goes through a file, never argv.
+check_github_token() {
+  printf 'authorization: Bearer %s\n' "$1" >"$work/gh-auth"
+  local path status
+  for path in "users/$owner" "repos/$repository"; do
+    status="$(curl -s -o /dev/null -w '%{http_code}' --max-time 20 -H @"$work/gh-auth" \
+      -H 'user-agent: bynk-registry' -H 'accept: application/vnd.github+json' "https://api.github.com/$path")" || status=000
+    [[ "$status" == 200 ]] || { rm -f "$work/gh-auth"; die "GitHub answered $status to /$path with the token in $state/github-api-token.
+   Use a classic token with no scopes (it reads any public user or repository), or a fine-grained one
+   whose resource owner is ${repository%%/*}. Delete that file and rerun to be asked again."; }
+  done
+  rm -f "$work/gh-auth"
+  ok "the GitHub API token can see $owner and $repository"
+}
 deploy_secrets="$work/deploy-secrets.env"
 write_deploy_secrets() {
   {
@@ -330,6 +347,7 @@ write_deploy_secrets() {
     # lookups (Workers share Cloudflare's addresses, and so the anonymous rate
     # limit), and then an operator's claim and a trusted publisher both fail.
     printf 'GITHUB_API_TOKEN=%s\n' "$api_token"
+    check_github_token "$api_token"
   } >"$deploy_secrets"
 }
 
