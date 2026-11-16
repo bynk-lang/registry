@@ -118,7 +118,7 @@ ask() { # ask <NAME> <question> [default]: a setting, asked for once
 }
 secret_file() { # secret_file <file> <question> <optional 0|1>: a secret, asked for once, never echoed
   local file="$state/$1" value=""
-  if [[ ! -f "$file" ]]; then
+  if [[ ! -s "$file" ]]; then
     [[ -t 0 ]] || die "$file is missing, and there's no terminal to ask"
     read -r -s -p "   ?   $2: " value; echo >&2
     [[ -n "$value" || "$3" == 1 ]] || die "$1 is required"
@@ -325,8 +325,11 @@ write_deploy_secrets() {
     printf 'REGISTRY_TOKENS=%s\n' "$(cat "$tokens_json")"
     printf 'REGISTRY_QUOTAS=%s\n' "$(cat "$state/registry-quotas.json" 2>/dev/null || echo '[]')"
     printf 'GITHUB_CLIENT_ID=%s\n' "$client_id"
-    local api_token; api_token="$(secret_file github-api-token "A GitHub token for member lookups (optional; Enter to skip)" 1)"
-    [[ -z "$api_token" ]] || printf 'GITHUB_API_TOKEN=%s\n' "$api_token"
+    local api_token; api_token="$(secret_file github-api-token "A GitHub token for user and repository lookups (a fine-grained token with no permissions is enough)" 0)"
+    # Required in practice: GitHub refuses the deployed Worker's anonymous
+    # lookups (Workers share Cloudflare's addresses, and so the anonymous rate
+    # limit), and then an operator's claim and a trusted publisher both fail.
+    printf 'GITHUB_API_TOKEN=%s\n' "$api_token"
   } >"$deploy_secrets"
 }
 
@@ -347,7 +350,7 @@ if wants deploy; then
     read -r -p "   ?   Deploy this to $env_name, overwriting every secret? [y/N] " answer
     [[ "$answer" == [yY]* ]] || die "not deployed"
   fi
-  # No terminal: an optional secret left out of the file (GITHUB_API_TOKEN,
+  # No terminal: an optional secret left out of the file (
   # GITHUB_BASE, GITHUB_API_BASE) is then a warning, not a prompt.
   (cd "$here" && "$bynk" deploy --env "$env_name" --secrets-file "$deploy_secrets" --force --yes </dev/null)
   rm -f "$deploy_secrets"
@@ -418,6 +421,7 @@ if wants orgs; then
     201) ok "claimed $org for $owner" ;;
     200) ok "$org was already claimed for $owner" ;;
     409) die "$org is claimed by someone else: $(body_of "$got")" ;;
+    400) die "the Worker couldn't look $owner up on GitHub: check the login, and that GITHUB_API_TOKEN ($state/github-api-token) is a valid token, then rerun from the deploy phase" ;;
     *) die "claiming $org answered $got" ;;
   esac
   if [[ $env_name == staging ]]; then
@@ -476,7 +480,7 @@ if wants github; then
   put_secret REGISTRY_TOKENS "$(cat "$tokens_json")"
   put_secret REGISTRY_QUOTAS "$(cat "$state/registry-quotas.json" 2>/dev/null || echo '[]')"
   put_secret REGISTRY_GITHUB_CLIENT_ID "$client_id"
-  api_token="$(secret_file github-api-token "A GitHub token for member lookups (optional; Enter to skip)" 1)"
+  api_token="$(secret_file github-api-token "A GitHub token for user and repository lookups (a fine-grained token with no permissions is enough)" 0)"
   if [[ -n "$api_token" ]]; then
     put_secret REGISTRY_GITHUB_API_TOKEN "$api_token"; want_secrets="$want_secrets REGISTRY_GITHUB_API_TOKEN"
   fi
