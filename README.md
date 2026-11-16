@@ -75,6 +75,7 @@ service is seen there before it is released.
 | `scripts/check-withdraw.sh` | A takedown and an organisation restore end to end, as CI runs it |
 | `scripts/deploy-guard.sh`, `scripts/test-deploy-guard.sh` | The deploy workflow's ref guard, and its tests |
 | `scripts/install-release.sh` | Installs a release's `bynk` and admission module for a deploy, checked against its `SHA256SUMS` |
+| `scripts/go-live.sh` | The first, local deploy of an environment, end to end: keys, tokens, deploy, seed, claims, conformance and the GitHub environment (see "Deploying") |
 
 **One context owns the bucket.** Under the standard library's resource model a
 bucket belongs to the context that declares it, so the read service, the
@@ -571,6 +572,26 @@ and the rate limiters' namespace ids into `bynk.deploy.lock`. That file holds
 no account ids or secrets, and is committed; the workflow refuses a limiter it
 doesn't list.
 
+`scripts/go-live.sh` is that first deploy, end to end, for one environment:
+
+```bash
+scripts/go-live.sh staging --plan   # up to the deploy plan; changes nothing remote
+scripts/go-live.sh staging          # then: scripts/go-live.sh production
+```
+
+It asks for a few settings once (the Cloudflare account, the hostname, the
+OAuth app's client id), then generates the keys, the registry directory and
+every token into `~/.bynk-registry/<env>` (mode 0700), and reuses them on every
+later run. Nothing is typed or pasted twice: the Worker's secrets
+(`bynk deploy --force`, so a rerun replaces a bad one) and the GitHub
+environment's secrets and variables are both written from those files. Each is
+then checked: the seeded `config.json` read back, the operator token accepted
+by the live Worker (a `REGISTRY_TOKENS` that doesn't parse is silently empty,
+so this is the check that catches it), the organisation claimed, staging's
+trusted publisher registered, conformance run, and the GitHub environment read
+back. Every phase can be rerun alone (`--only verify,orgs`). It never commits,
+releases or dispatches; it ends by saying what to do next.
+
 ## Seeding
 
 The bucket starts as a registry built offline with the `bynk registry` tooling:
@@ -578,7 +599,7 @@ at least its `config.json`, with `"api": "api"` so clients find the publish API.
 The root key stays offline; a delegate signs:
 
 ```bash
-bynk registry init ./reg --id bynk --key-out ~/secrets/root.key
+bynk registry init ./reg --id bynk-lang --key-out ~/secrets/root.key
 bynk registry delegate ./reg --key ~/secrets/root.key --delegate-out ~/secrets/online.key
 bynk registry add ./reg ./packages/hello --key ~/secrets/online.key
 seed/seed.sh ./reg --bucket <bucket-name>

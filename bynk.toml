@@ -11,3 +11,8 @@ version = "0.1.0"
 # (P3) and the edge cache (L7) are experimental; this service is the workload
 # they graduate on.
 allow = ["bynk.cloudflare.R2", "bynk.crypto", "bynk.cloudflare.RateLimit", "bynk.cloudflare.EdgeCache"]
+
+[workers]
+# Off `workers.dev`: each environment answers only on its custom domain
+# (README, "Deploying").
+workers_dev = false
