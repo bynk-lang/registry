@@ -202,7 +202,7 @@ on the first call; a line there that doesn't parse is refused, never dropped.
 | `GITHUB_CLIENT_ID` | The registry's GitHub OAuth app (see "Accounts") |
 | `GITHUB_BASE`, `GITHUB_API_BASE` | GitHub's sign-in and API origins; default `https://github.com` and `https://api.github.com` (tests point them at a fake) |
 | `REGISTRY_OIDC_TRUST` | Optional, never in production: another OIDC issuer for the `Workload` actor (see "Trusted publishing") |
-| `GITHUB_API_TOKEN` | Optional: a GitHub token for looking members up, to lift GitHub's anonymous rate limit |
+| `GITHUB_API_TOKEN` | A GitHub token for looking users and repositories up (a fine-grained token with no permissions is enough). Optional for `bynk dev`; needed in a deployment, where GitHub refuses anonymous lookups from Cloudflare's shared addresses, which breaks an operator's claim and registering a trusted publisher |
 | `REGISTRY_QUOTAS` | Optional: raised storage quotas, as JSON `[{"org", "bytes"}]`; an organisation not listed has 1 GiB (see "Limits") |
 
 **The root key never reaches the service.** Before every signature the service
@@ -555,7 +555,7 @@ gh release create v0.1.0 --target main --title v0.1.0 --notes "…"
 | secret | `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` | The account `bynk deploy` deploys into |
 | secret | `REGISTRY_SIGNING_KEY`, `REGISTRY_SIGNING_PUBLIC` | That environment's online delegate (see "Secrets") |
 | secret | `REGISTRY_TOKENS`, `REGISTRY_QUOTAS` | Operator tokens and raised quotas (optional) |
-| secret | `REGISTRY_GITHUB_CLIENT_ID`, `REGISTRY_GITHUB_API_TOKEN` | The environment's GitHub OAuth app, and an optional API token; deployed as `GITHUB_CLIENT_ID` and `GITHUB_API_TOKEN` |
+| secret | `REGISTRY_GITHUB_CLIENT_ID`, `REGISTRY_GITHUB_API_TOKEN` | The environment's GitHub OAuth app, and its API token; deployed as `GITHUB_CLIENT_ID` and `GITHUB_API_TOKEN` |
 | secret | `REGISTRY_CONFORMANCE_TOKEN`, `REGISTRY_NARROW_TOKEN` | Staging only: publish tokens for the conformance organisation, and a narrow one for another |
 | secret | `REGISTRY_WITHDRAW_TOKEN` | Staging only: an operator token that can `withdraw` and nothing else, listed in staging's `REGISTRY_TOKENS`, for the purge check. Never production's |
 | variable | `REGISTRY_URL` | The environment's registry origin |
