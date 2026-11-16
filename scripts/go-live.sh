@@ -347,7 +347,9 @@ if wants deploy; then
     read -r -p "   ?   Deploy this to $env_name, overwriting every secret? [y/N] " answer
     [[ "$answer" == [yY]* ]] || die "not deployed"
   fi
-  (cd "$here" && "$bynk" deploy --env "$env_name" --secrets-file "$deploy_secrets" --force --yes)
+  # No terminal: an optional secret left out of the file (GITHUB_API_TOKEN,
+  # GITHUB_BASE, GITHUB_API_BASE) is then a warning, not a prompt.
+  (cd "$here" && "$bynk" deploy --env "$env_name" --secrets-file "$deploy_secrets" --force --yes </dev/null)
   rm -f "$deploy_secrets"
   ok "deployed; bynk.deploy.lock records $env_name's ids (commit it: see the summary)"
 fi
@@ -361,7 +363,14 @@ served() { # served <path>: the live body, past the edge's 60-second copy
 if wants seed; then
   say "Seed $bucket"
   cloudflare_env
-  WRANGLER="${WRANGLER:-npx -y wrangler@4}" "$here/seed/seed.sh" "$reg" --bucket "$bucket"
+  if [[ -z "${WRANGLER:-}" ]]; then
+    if command -v wrangler >/dev/null; then WRANGLER=wrangler
+    elif command -v npx >/dev/null; then WRANGLER="npx -y wrangler@4"
+    else die "seeding needs wrangler: install it, put npx on PATH, or set WRANGLER"; fi
+  fi
+  [[ "$($WRANGLER --version 2>/dev/null | grep -o '[0-9][0-9.]*' | head -1)" == 4.* ]] ||
+    die "\`$WRANGLER\` isn't wrangler 4 (set WRANGLER to one that is)"
+  WRANGLER="$WRANGLER" "$here/seed/seed.sh" "$reg" --bucket "$bucket"
   status="$(curl -s -o /dev/null -w '%{http_code}' --max-time 20 "$url/config.json?go-live=$RANDOM")" || status=000
   if [[ "$status" != 200 ]]; then
     die "$url/config.json answered $status. If the domain isn't attached yet: Cloudflare dashboard, Workers & Pages,
