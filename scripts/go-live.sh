@@ -336,19 +336,24 @@ check_github_token() {
 }
 deploy_secrets="$work/deploy-secrets.env"
 write_deploy_secrets() {
+  # Asked for and checked first: anything printed inside the block below would
+  # land in the file.
+  local api_token
+  api_token="$(secret_file github-api-token "A GitHub token for user and repository lookups (classic with no scopes, or fine-grained owned by ${repository%%/*})" 0)"
+  check_github_token "$api_token"
   {
     printf 'REGISTRY_SIGNING_KEY=%s\n' "$(b64 "$delegate_key")"
     printf 'REGISTRY_SIGNING_PUBLIC=%s\n' "$delegate_public"
     printf 'REGISTRY_TOKENS=%s\n' "$(cat "$tokens_json")"
     printf 'REGISTRY_QUOTAS=%s\n' "$(cat "$state/registry-quotas.json" 2>/dev/null || echo '[]')"
     printf 'GITHUB_CLIENT_ID=%s\n' "$client_id"
-    local api_token; api_token="$(secret_file github-api-token "A GitHub token for user and repository lookups (a fine-grained token with no permissions is enough)" 0)"
     # Required in practice: GitHub refuses the deployed Worker's anonymous
     # lookups (Workers share Cloudflare's addresses, and so the anonymous rate
     # limit), and then an operator's claim and a trusted publisher both fail.
     printf 'GITHUB_API_TOKEN=%s\n' "$api_token"
-    check_github_token "$api_token"
   } >"$deploy_secrets"
+  # Every line a `NAME=value`, as `bynk deploy` reads it.
+  ! grep -vqE '^[A-Z_]+=.' "$deploy_secrets" || die "the deploy's secrets file has a line that isn't NAME=value (a bug in this script)"
 }
 
 if wants deploy; then
@@ -359,7 +364,7 @@ if wants deploy; then
     note "src/ or bynk.toml has uncommitted changes: they will be deployed"
   write_deploy_secrets
   cloudflare_env
-  (cd "$here" && "$bynk" deploy --env "$env_name" --dry-run)
+  (cd "$here" && "$bynk" deploy --env "$env_name" --secrets-file "$deploy_secrets" --force --dry-run </dev/null)
   if [[ $plan == 1 ]]; then
     ok "--plan: stopping before anything is changed"
     exit 0
@@ -498,7 +503,7 @@ if wants github; then
   put_secret REGISTRY_TOKENS "$(cat "$tokens_json")"
   put_secret REGISTRY_QUOTAS "$(cat "$state/registry-quotas.json" 2>/dev/null || echo '[]')"
   put_secret REGISTRY_GITHUB_CLIENT_ID "$client_id"
-  api_token="$(secret_file github-api-token "A GitHub token for user and repository lookups (a fine-grained token with no permissions is enough)" 0)"
+  api_token="$(secret_file github-api-token "A GitHub token for user and repository lookups (classic with no scopes, or fine-grained owned by ${repository%%/*})" 0)"
   if [[ -n "$api_token" ]]; then
     put_secret REGISTRY_GITHUB_API_TOKEN "$api_token"; want_secrets="$want_secrets REGISTRY_GITHUB_API_TOKEN"
   fi
