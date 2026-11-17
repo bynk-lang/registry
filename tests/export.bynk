@@ -1,5 +1,6 @@
 suite registry.store {
 	consumes registry.admission { Line }
+
 	// The scheduled export (R5.2), driven a tick at a time against the in-memory
 	// buckets. scripts/check-export.sh runs it under `bynk dev`, and restores
 	// from what it wrote.

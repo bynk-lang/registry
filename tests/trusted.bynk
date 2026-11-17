@@ -1,5 +1,6 @@
 suite registry.store {
 	consumes bynk { Response, Fetch }
+
 	// Trusted publishing (R4): registration with GitHub stubbed, and the
 	// exchange through the real handler with the token's claims passed in-process.
 	// The real OIDC seam runs against a fake issuer in scripts/check-trusted.sh.

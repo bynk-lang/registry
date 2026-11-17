@@ -1,6 +1,7 @@
 suite registry.store {
 	consumes registry.admission { Admitted, Line, Admit }
 	consumes bynk { Secrets }
+
 	// Abuse limits (R5.1): each limiter's refusal through its routes, with the
 	// limiter stubbed, and the quota's arithmetic. Cloudflare's counting is the
 	// standard library's (P3); scripts/check-limits.sh runs it under `bynk dev`.
