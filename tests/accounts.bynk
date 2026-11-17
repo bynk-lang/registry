@@ -1,4 +1,7 @@
 suite registry.store {
+	consumes bynk { Response, Secrets, Fetch }
+	consumes registry.admission { Refusal, Admit }
+
 	// Accounts (R3): the agents' decisions, the device flow with GitHub stubbed,
 	// and the account API. The real flow runs against a fake GitHub in
 	// scripts/check-accounts.sh.

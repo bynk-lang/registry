@@ -7,6 +7,7 @@ context registry.store
 uses registry.paths
 consumes bynk { Secrets, Clock }
 consumes bynk.crypto { Crypto, Digest }
+consumes registry.admission { Line }
 
 ---
 One takedown, as the log keeps it: when (epoch milliseconds), the acting

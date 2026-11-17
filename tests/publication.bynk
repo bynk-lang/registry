@@ -1,4 +1,6 @@
 suite registry.store {
+	consumes registry.admission { Line, Requirement }
+
 	// The publication rule (R6.1, decision D): every registry dependency
 	// resolves here. The organisations and indexes are the real agents, with the
 	// bucket stubbed; scripts/check-publication.sh drives it through the API.

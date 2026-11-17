@@ -1,4 +1,8 @@
 suite registry.store {
+	consumes registry.admission { Admitted, Line, Requirement, Admit }
+	consumes bynk { Secrets }
+	consumes bynk.crypto { Crypto }
+
 	// The operator routes (R5a.2): the takedown, its log, and restoring an
 	// organisation, against the in-memory buckets with the token table and its
 	// digest stubbed (every token digests to `64`). scripts/check-withdraw.sh

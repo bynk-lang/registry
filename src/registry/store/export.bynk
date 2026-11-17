@@ -5,7 +5,7 @@
 context registry.store
 
 uses registry.paths
-consumes bynk.cloudflare { R2 }
+consumes bynk.cloudflare { R2, R2Put, R2Condition }
 
 ---
 The backup bucket: a copy of the store bucket's keys, plus `agents/packages/`
