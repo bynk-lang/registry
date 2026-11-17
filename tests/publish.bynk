@@ -1,4 +1,7 @@
 suite registry.store {
+	consumes registry.admission { Line, Refusal, Admit }
+	consumes bynk { Secrets }
+	consumes bynk.crypto { Crypto }
 	// The publish API's decisions, with the bucket, the secrets, the crypto and
 	// the admission module stubbed. The real module, crypto and router run in
 	// scripts/check-publish.sh.

@@ -7,7 +7,7 @@ context registry.store
 
 uses registry.paths
 uses registry.ranges
-consumes registry.admission { Admit }
+consumes registry.admission { Admit, Requirement, Line }
 
 ---
 Whether a package's registry dependencies all resolve here: yes, the first

@@ -6,9 +6,10 @@
 context registry.store
 
 uses registry.paths
-consumes bynk { Secrets }
+consumes bynk { Secrets, Clock }
 consumes bynk.crypto { Crypto, Digest, Signature }
-consumes registry.admission { Admit }
+consumes registry.admission { Admit, Line, Signer, Refusal, Admitted }
+consumes bynk.cloudflare { R2Condition, R2Put }
 
 ---
 One package's index: its lines, in publish order. The single writer (track
